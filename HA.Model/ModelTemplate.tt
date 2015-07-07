@@ -10,7 +10,7 @@
 <# 
     //string connectionString = "server=192.168.0.169,1438;database=TCBasePay;user id=TCBasePay_test;password=!^E*7DFSd;"; 
       //string connectionString = "server=192.168.0.169,1440;database=TCHotel;user id=admin_17u_com;password=sf!7%5eI3X;";
-     string connectionString = "server=192.168.0.154,1438;database=TCFinance;user id=TCFinance;password=JKL*^E$5g6;"; 
+     string connectionString = "server=.;database=HA;user id=sa;password=abc123.;"; 
     SqlConnection conn = new SqlConnection(connectionString);
     conn.Open(); 
     System.Data.DataTable schema = conn.GetSchema("TABLES"); 
@@ -22,7 +22,7 @@
     {
     string tableName = row["TABLE_NAME"].ToString();	
     //表名
-    if(tableName!="")continue;	 
+    if(tableName!="FD_BaseData")continue;	 
     string className = tableName.Substring(tableName.IndexOf('_') + 1);
     #>
     using System;

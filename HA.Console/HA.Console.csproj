@@ -52,6 +52,10 @@
       <Project>{c65e4ddd-b129-437c-9c13-b851c513974f}</Project>
       <Name>HA.Core</Name>
     </ProjectReference>
+    <ProjectReference Include="..\HA.Model\HA.Model.csproj">
+      <Project>{cbcabccb-8380-44a8-a230-6b693bc460c8}</Project>
+      <Name>HA.Model</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 

@@ -385,13 +385,13 @@ namespace HA.Core
         Regex rxSelect = new Regex(@"\A\s*(SELECT|EXECUTE|CALL)\s", RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Multiline);
         Regex rxFrom = new Regex(@"\A\s*FROM\s", RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Multiline);
 
-        public string EscapeTableName(string str)
+        public static string EscapeTableName(string str)
         {
             // Assume table names with "dot" are already escaped
             return str.IndexOf('.') >= 0 ? str : EscapeSqlIdentifier(str);
         }
 
-        public string EscapeSqlIdentifier(string str)
+        public static string EscapeSqlIdentifier(string str)
         {
             return string.Format("[{0}]", str);
         }
@@ -1053,7 +1053,7 @@ namespace HA.Core
 
         private void Build(StringBuilder sb, List<object> args, Sql lhs)
         {
-            if (!String.IsNullOrEmpty(_sql))
+            if (!string.IsNullOrEmpty(_sql))
             {
                 // Add SQL to the string
                 if (sb.Length > 0)
@@ -1088,7 +1088,7 @@ namespace HA.Core
 
         public Sql Select(params object[] columns)
         {
-            return Append(new Sql("SELECT " + String.Join(", ", (from x in columns select x.ToString()).ToArray())));
+            return Append(new Sql("SELECT " + string.Join(", ", (from x in columns select x.ToString()).ToArray())));
         }
 
         public Sql From(params object[] tables)
@@ -1123,6 +1123,99 @@ namespace HA.Core
             {
                 return _sql.Append("ON " + onClause, args);
             }
+        }
+    }
+
+    public class Sql<T> : Sql
+    {
+        string _alias;
+
+        static Dictionary<ExpressionType, string> operators;
+
+        static Sql()
+        {
+            operators = new Dictionary<ExpressionType, string>();
+            operators.Add(ExpressionType.Equal, "=");
+            operators.Add(ExpressionType.GreaterThan, ">");
+            operators.Add(ExpressionType.GreaterThanOrEqual, ">=");
+            operators.Add(ExpressionType.LessThan, "<");
+            operators.Add(ExpressionType.LessThanOrEqual, "<=");
+            operators.Add(ExpressionType.NotEqual, "<>");
+        }
+
+        public Sql()
+        {
+        }
+
+        public Sql(string alias)
+        {
+            this._alias = alias;
+        }
+
+        public Sql<T> Select()
+        {
+            var pd = Database.PocoData.ForType(typeof(T));
+            var prefix = !string.IsNullOrWhiteSpace(_alias) ? _alias : Database.EscapeTableName(Database.PocoData.ForType(typeof(T)).TableInfo.TableName);
+            return (Sql<T>)Append(new Sql("SELECT " + string.Join(", ", pd.QueryColumns.Select(c => prefix + "." + Database.EscapeSqlIdentifier(c)))));
+        }
+
+        public Sql<T> Where(Expression<Func<T, bool>> expression)
+        {
+            BinaryExpression operation = (BinaryExpression)expression.Body;
+            MemberExpression left = operation.Left as MemberExpression;
+            if (left == null)
+            {
+                left = (operation.Left as UnaryExpression).Operand as MemberExpression;
+            }
+            if (left == null)
+            {
+                left = ((operation.Left as UnaryExpression).Operand as UnaryExpression).Operand as MemberExpression;
+            }
+            object value = null;
+            ConstantExpression rightConstant = operation.Right as ConstantExpression;
+            if (rightConstant != null)
+            {
+                value = rightConstant.Value;
+            }
+            if (value == null)
+            {
+                MemberExpression rightMember = operation.Right as MemberExpression;
+                if (rightMember == null)
+                {
+                    UnaryExpression rightUnary = operation.Right as UnaryExpression;
+                    if (rightUnary != null)
+                    {
+                        rightMember = (operation.Right as UnaryExpression).Operand as MemberExpression;
+                    }
+                }
+                if (rightMember != null)
+                {
+                    var objectMember = Expression.Convert(rightMember, typeof(object));
+                    var getterLambda = Expression.Lambda<Func<object>>(objectMember);
+                    var getter = getterLambda.Compile();
+                    value = getter.Invoke();
+                }
+            }
+            if (value == null)
+            {
+                MethodCallExpression rightMethodCall = operation.Right as MethodCallExpression;
+                if (rightMethodCall != null)
+                {
+                    value = Expression.Lambda(rightMethodCall).Compile().DynamicInvoke();
+                }
+            }
+            var pd = Database.PocoData.ForType(typeof(T));
+            string name = pd.Columns.FirstOrDefault(u => u.Value.PropertyInfo.Name == left.Member.Name).Value.ColumnName;
+            if (!string.IsNullOrWhiteSpace(_alias))
+            {
+                name = _alias + "." + EscapeSqlIdentifier(name);
+            }
+            else
+            {
+                name = EscapeSqlIdentifier(name);
+            }
+            string sql = string.Format("{0}{1}@0", name, operators[operation.NodeType]);
+            return (Sql<T>)Where(sql, value);
         }
     }
 }

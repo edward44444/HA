@@ -1,4 +1,5 @@
 ﻿using HA.Core;
+using HA.Model.Foundation;
 using System;
 using System.Collections.Generic;
 using System.Data.SqlClient;
@@ -13,13 +14,9 @@ namespace HA.Console
         static void Main(string[] args)
         {
             var db = new Database("HA");
-            db.Execute(@"DECLARE @T NVARCHAR(50)='1234'
+            var lst = db.Fetch<BaseData>("");
 
-INSERT dbo.SL_OrderLog
-        ( olOrderSerialId ,
-          olOperation 
-        )
-VALUES  ( @T,@0 )", "测试");
+            lst.Where(t => t == null);
         }
     }
 }
