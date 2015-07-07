@@ -414,6 +414,67 @@ namespace HA.Core
             return sql;
         }
 
+        // Return an enumerable collection of pocos
+        public IEnumerable<T> Query<T>(string sql, params object[] args)
+        {
+            sql = AddSelectClause<T>(sql);
+
+            OpenSharedConnection();
+            try
+            {
+                using (var cmd = CreateCommand(_sharedConnection, sql, args))
+                {
+                    IDataReader r;
+                    var pd = PocoData.ForType(typeof(T));
+                    try
+                    {
+                        r = cmd.ExecuteReader();
+                        OnExecutedCommand(cmd);
+                    }
+                    catch (Exception x)
+                    {
+                        OnException(x);
+                        throw;
+                    }
+                    var factory = pd.GetFactory(cmd.CommandText, _sharedConnection.ConnectionString, ForceDateTimesToUtc, 0, r.FieldCount, r) as Func<IDataReader, T>;
+                    using (r)
+                    {
+                        while (true)
+                        {
+                            T poco;
+                            try
+                            {
+                                if (!r.Read())
+                                    yield break;
+                                poco = factory(r);
+                            }
+                            catch (Exception x)
+                            {
+                                OnException(x);
+                                throw;
+                            }
+                            yield return poco;
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                CloseSharedConnection();
+            }
+        }
+
+        // Return a typed list of pocos
+        public List<T> Fetch<T>(string sql, params object[] args)
+        {
+            return Query<T>(sql, args).ToList();
+        }
+
+        public List<T> Fetch<T>(Sql sql)
+        {
+            return Fetch<T>(sql.SQL, sql.Arguments);
+        }
+
         public int CommandTimeout { get; set; }
         public int OneTimeCommandTimeout { get; set; }
 
@@ -1046,6 +1107,7 @@ namespace HA.Core
         }
 
         public SqlJoinClause InnerJoin(string table) { return Join("INNER JOIN ", table); }
+
         public SqlJoinClause LeftJoin(string table) { return Join("LEFT JOIN ", table); }
 
         public class SqlJoinClause

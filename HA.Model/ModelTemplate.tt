@@ -1,0 +1,161 @@
+﻿<#@ template debug="true" hostspecific="false" language="C#" #>
+<#@ output extension=".cs" #>
+<#@ assembly name="System.Data" #>
+<#@ assembly name="System.xml" #>
+<#@ assembly name="System" #>
+<#@ import namespace="System.Text.RegularExpressions" #>
+<#@ import namespace="System.Collections.Generic" #>
+<#@ import namespace="System.Data.SqlClient" #>
+<#@ import namespace="System.Data" #>
+<# 
+    //string connectionString = "server=192.168.0.169,1438;database=TCBasePay;user id=TCBasePay_test;password=!^E*7DFSd;"; 
+      //string connectionString = "server=192.168.0.169,1440;database=TCHotel;user id=admin_17u_com;password=sf!7%5eI3X;";
+     string connectionString = "server=192.168.0.154,1438;database=TCFinance;user id=TCFinance;password=JKL*^E$5g6;"; 
+    SqlConnection conn = new SqlConnection(connectionString);
+    conn.Open(); 
+    System.Data.DataTable schema = conn.GetSchema("TABLES"); 
+    string selectQuery = "select * from @tableName"; 
+    SqlCommand command = new SqlCommand(selectQuery,conn); 
+    SqlDataAdapter ad = new SqlDataAdapter(command); 
+    System.Data.DataSet ds = new DataSet();
+    foreach(System.Data.DataRow row in schema.Rows)
+    {
+    string tableName = row["TABLE_NAME"].ToString();	
+    //表名
+    if(tableName!="")continue;	 
+    string className = tableName.Substring(tableName.IndexOf('_') + 1);
+    #>
+    using System;
+    using TC.Finance.Infrastructure;
+    using TC.Finance.Infrastructure.PetaPoco;
+    using System.ComponentModel;
+    namespace TC.Finance.Model
+        {
+    [TableName("<#=tableName#>")]
+    <#
+        ds.Tables.Clear();
+        bool isFirstColumn = true;
+        command.CommandText = selectQuery.Replace("@tableName",row["TABLE_NAME"].ToString());
+        ad.FillSchema(ds, SchemaType.Mapped, row["TABLE_NAME"].ToString()); 	
+       var key="";
+       foreach (DataColumn dc in ds.Tables[0].Columns)
+            {	
+               string columnName = dc.ColumnName;
+               var match = Regex.Match(columnName, "[A-Z]+Id$");
+                    if (match.Value.Equals(columnName))
+                    {
+                        key=columnName;
+                        break;
+                    }
+            }
+    #>[PrimaryKey("<#=key#>")]
+    [ExplicitColumns] 
+    public class <#=className#> : EntityBase
+    { 
+        <#					 
+                        
+            foreach (DataColumn dc in ds.Tables[0].Columns)
+            {						
+                string dataType = string.Empty;
+                switch(dc.DataType.Name)
+                {
+                    case "Int64":
+                        dataType="long";
+                        break;
+                    case "Int32":
+                        dataType="int";
+                        break;
+                    case "String":
+                        dataType="string";
+                        break;
+                    case "Boolean":
+                        dataType="bool";
+                        break;
+                    default:
+                        dataType = dc.DataType.Name;
+                        break;
+                }
+                ds.Tables.Clear();		 
+                string columnName = dc.ColumnName;
+                var sqlCommandString = "select b from (SELECT  a.name a , isnull(g.[value],'-') AS b FROM sys.columns a left join sys.extended_properties g on (a.object_id = g.major_id AND g.minor_id = a.column_id) WHERE  object_id = (SELECT object_id FROM sys.tables WHERE name = '"+tableName+"')) as x where a='"+columnName+"'";
+                command.CommandText =  sqlCommandString;
+                ad = new SqlDataAdapter(command);						
+                ad.Fill(ds);
+                string descriptions = string.Empty;
+                try
+                {
+                    descriptions = ds.Tables[0].Rows[0][0].ToString();
+                }
+                catch(Exception e)
+                {
+                    descriptions = e.Message;
+                }
+                if(isFirstColumn)
+                {
+                    isFirstColumn = false;#>
+
+        /// <summary>
+        /// <#= descriptions #>
+        /// </summary>
+        [Column("<#=columnName#>")]
+        [DisplayName("<#=descriptions #>")]
+        public <#= dataType #> Id {get;set;}
+        
+                <#}else{
+                switch(columnName)
+                {
+                    
+                default:
+                    var match = Regex.Match(columnName, "[a-z]+[A-Z]+ID$");
+                    if (match.Value.Equals(columnName))
+                    {#>									
+        
+        /// <summary>
+        /// <#= descriptions #>
+        /// </summary>
+        [Column(Name="<#=columnName#>")]
+        [DisplayName("<#=descriptions #>")]
+        public <#= dataType #> <#= columnName #> {get;set;}
+                        <#
+                    }
+                    else
+                    {									
+                        var matcha = Regex.Match(columnName, "[A-Z][A-Za-z]+"); 
+                        if(string.IsNullOrEmpty(columnName))
+                        {
+                        #>								
+        
+        /// <summary>
+        /// <#= descriptions #>
+        /// </summary>
+        [Column("<#=columnName#>")]
+        [DisplayName("<#=descriptions #>")]
+        public <#= dataType #> <#= matcha.Value #> {get;set;}
+                        <#}else
+                        {
+                        var m = Regex.Match(columnName, "[A-Z]+"); 
+                            #>
+        
+        /// <summary>
+        /// <#= descriptions #>
+        /// </summary>
+        [Column("<#=columnName#>")]
+        [DisplayName("<#=descriptions #>")]
+        public <#= dataType #> <#= columnName.Substring(m.Length-1) #> {get;set;}
+                        <#
+                        }
+                    }
+                break;
+                }
+                #>
+                <#}#>
+            <#}#>
+        
+    }
+}
+    <#
+    }
+#>
+
+ 
+  
