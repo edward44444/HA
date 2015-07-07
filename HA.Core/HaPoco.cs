@@ -5,6 +5,9 @@ using System.Configuration;
 using System.Data;
 using System.Data.Common;
 using System.Linq;
+using System.Linq.Expressions;
+using System.Reflection;
+using System.Reflection.Emit;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -85,7 +88,6 @@ namespace HA.Core
         bool _transactionCancelled;
         string _lastSql;
         object[] _lastArgs;
-        string _paramPrefix = "@";
 
         public virtual IDbConnection OnConnectionOpened(IDbConnection conn) { return conn; }
         public virtual void OnConnectionClosing(IDbConnection conn) { }
@@ -209,13 +211,14 @@ namespace HA.Core
                 string param = m.Value.Substring(1);
                 object arg_val;
                 int paramIndex;
-                if (!int.TryParse(param, out paramIndex)) 
-                    throw new ArgumentException(string.Format("Parameter '@{0}' is illegal", param));
+                if (!int.TryParse(param, out paramIndex))
+                {
+                    return m.Value;
+                }
                 // Numbered parameter
-                if (paramIndex < 0 || paramIndex >= args_src.Length) 
+                if (paramIndex < 0 || paramIndex >= args_src.Length)
                     throw new ArgumentOutOfRangeException(string.Format("Parameter '@{0}' specified but only {1} parameters supplied (in `{2}`)", paramIndex, args_src.Length, _sql));
                 arg_val = args_src[paramIndex];
-
                 // Expand collections to parameter lists
                 if ((arg_val as IEnumerable) != null && (arg_val as string) == null && (arg_val as byte[]) == null)
                 {
@@ -236,10 +239,10 @@ namespace HA.Core
         }
 
         // Add a parameter to a DB command
-        void AddParam(IDbCommand cmd, object item, string ParameterPrefix)
+        void AddParam(IDbCommand cmd, object item)
         {
             var p = cmd.CreateParameter();
-            p.ParameterName = string.Format("{0}{1}", ParameterPrefix, cmd.Parameters.Count);
+            p.ParameterName = string.Format("@{0}", cmd.Parameters.Count);
             if (item == null)
             {
                 p.Value = DBNull.Value;
@@ -306,7 +309,7 @@ namespace HA.Core
 
             foreach (var item in args)
             {
-                AddParam(cmd, item, _paramPrefix);
+                AddParam(cmd, item);
             }
 
             if (!string.IsNullOrEmpty(sql)) 
@@ -382,6 +385,35 @@ namespace HA.Core
         Regex rxSelect = new Regex(@"\A\s*(SELECT|EXECUTE|CALL)\s", RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Multiline);
         Regex rxFrom = new Regex(@"\A\s*FROM\s", RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Multiline);
 
+        public string EscapeTableName(string str)
+        {
+            // Assume table names with "dot" are already escaped
+            return str.IndexOf('.') >= 0 ? str : EscapeSqlIdentifier(str);
+        }
+
+        public string EscapeSqlIdentifier(string str)
+        {
+            return string.Format("[{0}]", str);
+        }
+
+        string AddSelectClause<T>(string sql)
+        {
+            if (sql.StartsWith(";"))
+                return sql.Substring(1);
+
+            if (!rxSelect.IsMatch(sql))
+            {
+                var pd = PocoData.ForType(typeof(T));
+                var tableName = EscapeTableName(pd.TableInfo.TableName);
+                string cols = string.Join(", ", (from c in pd.QueryColumns select tableName + "." + EscapeSqlIdentifier(c)).ToArray());
+                if (!rxFrom.IsMatch(sql))
+                    sql = string.Format("SELECT {0} FROM {1} {2}", cols, tableName, sql);
+                else
+                    sql = string.Format("SELECT {0} {1}", cols, sql);
+            }
+            return sql;
+        }
+
         public int CommandTimeout { get; set; }
         public int OneTimeCommandTimeout { get; set; }
 
@@ -404,12 +436,458 @@ namespace HA.Core
             _lastArgs = (from IDataParameter parameter in cmd.Parameters select parameter.Value).ToArray();
         }
 
+        public string LastSQL { get { return _lastSql; } }
+        public object[] LastArgs { get { return _lastArgs; } }
+
+        public string LastCommand
+        {
+            get { return FormatCommand(_lastSql, _lastArgs); }
+        }
+
+        public string FormatCommand(IDbCommand cmd)
+        {
+            return FormatCommand(cmd.CommandText, (from IDataParameter parameter in cmd.Parameters select parameter.Value).ToArray());
+        }
+
+        public string FormatCommand(string sql, object[] args)
+        {
+            var sb = new StringBuilder();
+            if (sql == null)
+                return "";
+            sb.Append(sql);
+            if (args != null && args.Length > 0)
+            {
+                sb.Append("\n");
+                for (int i = 0; i < args.Length; i++)
+                {
+                    sb.AppendFormat("\t -> @{0} [{1}] = \"{2}\"\n", i, args[i].GetType().Name, args[i]);
+                }
+                sb.Remove(sb.Length - 1, 1);
+            }
+            return sb.ToString();
+        }
+
         // Automatically close one open shared connection
         public void Dispose()
         {
             // Automatically close one open connection reference
             //  (Works with KeepConnectionAlive and manually opening a shared connection)
             CloseSharedConnection();
+        }
+
+        public class PocoColumn
+        {
+            public string ColumnName;
+            public PropertyInfo PropertyInfo;
+            public bool ResultColumn;
+            public virtual void SetValue(object target, object val) { PropertyInfo.SetValue(target, val, null); }
+            public virtual object GetValue(object target) { return PropertyInfo.GetValue(target, null); }
+            public virtual object ChangeType(object val) { return Convert.ChangeType(val, PropertyInfo.PropertyType); }
+        }
+
+        public class ExpandoColumn : PocoColumn
+        {
+            public override void SetValue(object target, object val) { (target as IDictionary<string, object>)[ColumnName] = val; }
+            public override object GetValue(object target)
+            {
+                object val = null;
+                (target as IDictionary<string, object>).TryGetValue(ColumnName, out val);
+                return val;
+            }
+            public override object ChangeType(object val) { return val; }
+        }
+
+        public class PocoData
+        {
+            public PocoData()
+            {
+            }
+
+            public static PocoData ForObject(object o, string primaryKeyName)
+            {
+                var t = o.GetType();
+                if (t == typeof(System.Dynamic.ExpandoObject))
+                {
+                    var pd = new PocoData();
+                    pd.TableInfo = new TableInfo();
+                    pd.Columns = new Dictionary<string, PocoColumn>(StringComparer.OrdinalIgnoreCase);
+                    pd.Columns.Add(primaryKeyName, new ExpandoColumn() { ColumnName = primaryKeyName });
+                    pd.TableInfo.PrimaryKey = primaryKeyName;
+                    pd.TableInfo.AutoIncrement = true;
+                    foreach (var col in (o as IDictionary<string, object>).Keys)
+                    {
+                        if (col != primaryKeyName)
+                            pd.Columns.Add(col, new ExpandoColumn() { ColumnName = col });
+                    }
+                    return pd;
+                }
+                else
+                {
+                    return ForType(t);
+                }
+            }
+            static System.Threading.ReaderWriterLockSlim RWLock = new System.Threading.ReaderWriterLockSlim();
+            public static PocoData ForType(Type t)
+            {
+                // Check cache
+                RWLock.EnterReadLock();
+                PocoData pd;
+                try
+                {
+                    if (m_PocoDatas.TryGetValue(t, out pd))
+                        return pd;
+                }
+                finally
+                {
+                    RWLock.ExitReadLock();
+                }
+
+                // Cache it
+                RWLock.EnterWriteLock();
+                try
+                {
+                    // Check again
+                    if (m_PocoDatas.TryGetValue(t, out pd))
+                        return pd;
+
+                    // Create it
+                    pd = new PocoData(t);
+
+                    m_PocoDatas.Add(t, pd);
+                }
+                finally
+                {
+                    RWLock.ExitWriteLock();
+                }
+                return pd;
+            }
+
+            public PocoData(Type t)
+            {
+                type = t;
+                TableInfo = new TableInfo();
+
+                // Get the table name
+                var tableNameAtt = t.GetCustomAttributes<TableNameAttribute>(true).FirstOrDefault();
+                TableInfo.TableName = tableNameAtt == null ? t.Name : tableNameAtt.Value;
+
+                // Get the primary key
+                var primaryKeyAttr = t.GetCustomAttributes<PrimaryKeyAttribute>(true).FirstOrDefault();
+                TableInfo.PrimaryKey = primaryKeyAttr == null ? "ID" : primaryKeyAttr.Value;
+                TableInfo.AutoIncrement = primaryKeyAttr == null ? false : primaryKeyAttr.AutoIncrement;
+
+                Columns = new Dictionary<string, PocoColumn>(StringComparer.OrdinalIgnoreCase);
+                foreach (var pi in t.GetProperties())
+                {
+                    // Work out if properties is to be included
+                    var colAttr = pi.GetCustomAttributes<ColumnAttribute>(true).FirstOrDefault();
+                    if (colAttr == null)
+                        continue;
+
+                    var pc = new PocoColumn();
+                    pc.PropertyInfo = pi;
+
+                    // Work out the DB column name
+                    pc.ColumnName = colAttr.Name;
+                    if ((colAttr as ResultColumnAttribute) != null)
+                        pc.ResultColumn = true;
+
+                    // Store it
+                    Columns.Add(pc.ColumnName, pc);
+                }
+
+                // Build column list for automatic select
+                QueryColumns = (from c in Columns where !c.Value.ResultColumn select c.Key).ToArray();
+            }
+
+            static bool IsIntegralType(Type t)
+            {
+                var tc = Type.GetTypeCode(t);
+                return tc >= TypeCode.SByte && tc <= TypeCode.UInt64;
+            }
+
+            // Create factory function that can convert a IDataReader record into a POCO
+            public Delegate GetFactory(string sql, string connString, bool ForceDateTimesToUtc, int firstColumn, int countColumns, IDataReader r)
+            {
+                // Check cache
+                var key = string.Format("{0}:{1}:{2}:{3}:{4}", sql, connString, ForceDateTimesToUtc, firstColumn, countColumns);
+                RWLock.EnterReadLock();
+                try
+                {
+                    // Have we already created it?
+                    Delegate factory;
+                    if (PocoFactories.TryGetValue(key, out factory))
+                        return factory;
+                }
+                finally
+                {
+                    RWLock.ExitReadLock();
+                }
+
+                // Take the writer lock
+                RWLock.EnterWriteLock();
+
+                try
+                {
+                    // Check again, just in case
+                    Delegate factory;
+                    if (PocoFactories.TryGetValue(key, out factory))
+                        return factory;
+
+                    // Create the method
+                    var m = new DynamicMethod("petapoco_factory_" + PocoFactories.Count.ToString(), type, new Type[] { typeof(IDataReader) }, true);
+                    var il = m.GetILGenerator();
+
+                    if (type == typeof(object))
+                    {
+                        // var poco=new T()
+                        il.Emit(OpCodes.Newobj, typeof(System.Dynamic.ExpandoObject).GetConstructor(Type.EmptyTypes));			// obj
+
+                        MethodInfo fnAdd = typeof(IDictionary<string, object>).GetMethod("Add");
+
+                        // Enumerate all fields generating a set assignment for the column
+                        for (int i = firstColumn; i < firstColumn + countColumns; i++)
+                        {
+                            var srcType = r.GetFieldType(i);
+
+                            il.Emit(OpCodes.Dup);						// obj, obj
+                            il.Emit(OpCodes.Ldstr, r.GetName(i));		// obj, obj, fieldname
+
+                            // Get the converter
+                            Func<object, object> converter = null;
+
+                            if (ForceDateTimesToUtc && converter == null && srcType == typeof(DateTime))
+                                converter = delegate(object src) { return new DateTime(((DateTime)src).Ticks, DateTimeKind.Utc); };
+
+                            // Setup stack for call to converter
+                            AddConverterToStack(il, converter);
+
+                            // r[i]
+                            il.Emit(OpCodes.Ldarg_0);					// obj, obj, fieldname, converter?,    rdr
+                            il.Emit(OpCodes.Ldc_I4, i);					// obj, obj, fieldname, converter?,  rdr,i
+                            il.Emit(OpCodes.Callvirt, fnGetValue);		// obj, obj, fieldname, converter?,  value
+
+                            // Convert DBNull to null
+                            il.Emit(OpCodes.Dup);						// obj, obj, fieldname, converter?,  value, value
+                            il.Emit(OpCodes.Isinst, typeof(DBNull));	// obj, obj, fieldname, converter?,  value, (value or null)
+                            var lblNotNull = il.DefineLabel();
+                            il.Emit(OpCodes.Brfalse_S, lblNotNull);		// obj, obj, fieldname, converter?,  value
+                            il.Emit(OpCodes.Pop);						// obj, obj, fieldname, converter?
+                            if (converter != null)
+                                il.Emit(OpCodes.Pop);					// obj, obj, fieldname, 
+                            il.Emit(OpCodes.Ldnull);					// obj, obj, fieldname, null
+                            if (converter != null)
+                            {
+                                var lblReady = il.DefineLabel();
+                                il.Emit(OpCodes.Br_S, lblReady);
+                                il.MarkLabel(lblNotNull);
+                                il.Emit(OpCodes.Callvirt, fnInvoke);
+                                il.MarkLabel(lblReady);
+                            }
+                            else
+                            {
+                                il.MarkLabel(lblNotNull);
+                            }
+
+                            il.Emit(OpCodes.Callvirt, fnAdd);
+                        }
+                    }
+                    else if (type.IsValueType || type == typeof(string) || type == typeof(byte[]))
+                    {
+                        // Do we need to install a converter?
+                        var srcType = r.GetFieldType(0);
+                        var converter = GetConverter(ForceDateTimesToUtc, null, srcType, type);
+
+                        // "if (!rdr.IsDBNull(i))"
+                        il.Emit(OpCodes.Ldarg_0);										// rdr
+                        il.Emit(OpCodes.Ldc_I4_0);										// rdr,0
+                        il.Emit(OpCodes.Callvirt, fnIsDBNull);							// bool
+                        var lblCont = il.DefineLabel();
+                        il.Emit(OpCodes.Brfalse_S, lblCont);
+                        il.Emit(OpCodes.Ldnull);										// null
+                        var lblFin = il.DefineLabel();
+                        il.Emit(OpCodes.Br_S, lblFin);
+
+                        il.MarkLabel(lblCont);
+
+                        // Setup stack for call to converter
+                        AddConverterToStack(il, converter);
+
+                        il.Emit(OpCodes.Ldarg_0);										// rdr
+                        il.Emit(OpCodes.Ldc_I4_0);										// rdr,0
+                        il.Emit(OpCodes.Callvirt, fnGetValue);							// value
+
+                        // Call the converter
+                        if (converter != null)
+                            il.Emit(OpCodes.Callvirt, fnInvoke);
+
+                        il.MarkLabel(lblFin);
+                        il.Emit(OpCodes.Unbox_Any, type);								// value converted
+                    }
+                    else
+                    {
+                        // var poco=new T()
+                        il.Emit(OpCodes.Newobj, type.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new Type[0], null));
+
+                        // Enumerate all fields generating a set assignment for the column
+                        for (int i = firstColumn; i < firstColumn + countColumns; i++)
+                        {
+                            // Get the PocoColumn for this db column, ignore if not known
+                            PocoColumn pc;
+                            if (!Columns.TryGetValue(r.GetName(i), out pc))
+                                continue;
+
+                            // Get the source type for this column
+                            var srcType = r.GetFieldType(i);
+                            var dstType = pc.PropertyInfo.PropertyType;
+
+                            // "if (!rdr.IsDBNull(i))"
+                            il.Emit(OpCodes.Ldarg_0);										// poco,rdr
+                            il.Emit(OpCodes.Ldc_I4, i);										// poco,rdr,i
+                            il.Emit(OpCodes.Callvirt, fnIsDBNull);							// poco,bool
+                            var lblNext = il.DefineLabel();
+                            il.Emit(OpCodes.Brtrue_S, lblNext);								// poco
+
+                            il.Emit(OpCodes.Dup);											// poco,poco
+
+                            // Do we need to install a converter?
+                            var converter = GetConverter(ForceDateTimesToUtc, pc, srcType, dstType);
+
+                            // Fast
+                            bool Handled = false;
+                            if (converter == null)
+                            {
+                                var valuegetter = typeof(IDataRecord).GetMethod("Get" + srcType.Name, new Type[] { typeof(int) });
+                                if (valuegetter != null
+                                        && valuegetter.ReturnType == srcType
+                                        && (valuegetter.ReturnType == dstType || valuegetter.ReturnType == Nullable.GetUnderlyingType(dstType)))
+                                {
+                                    il.Emit(OpCodes.Ldarg_0);										// *,rdr
+                                    il.Emit(OpCodes.Ldc_I4, i);										// *,rdr,i
+                                    il.Emit(OpCodes.Callvirt, valuegetter);							// *,value
+
+                                    // Convert to Nullable
+                                    if (Nullable.GetUnderlyingType(dstType) != null)
+                                    {
+                                        il.Emit(OpCodes.Newobj, dstType.GetConstructor(new Type[] { Nullable.GetUnderlyingType(dstType) }));
+                                    }
+
+                                    il.Emit(OpCodes.Callvirt, pc.PropertyInfo.GetSetMethod(true));		// poco
+                                    Handled = true;
+                                }
+                            }
+
+                            // Not so fast
+                            if (!Handled)
+                            {
+                                // Setup stack for call to converter
+                                AddConverterToStack(il, converter);
+
+                                // "value = rdr.GetValue(i)"
+                                il.Emit(OpCodes.Ldarg_0);										// *,rdr
+                                il.Emit(OpCodes.Ldc_I4, i);										// *,rdr,i
+                                il.Emit(OpCodes.Callvirt, fnGetValue);							// *,value
+
+                                // Call the converter
+                                if (converter != null)
+                                    il.Emit(OpCodes.Callvirt, fnInvoke);
+
+                                // Assign it
+                                il.Emit(OpCodes.Unbox_Any, pc.PropertyInfo.PropertyType);		// poco,poco,value
+                                il.Emit(OpCodes.Callvirt, pc.PropertyInfo.GetSetMethod(true));		// poco
+                            }
+
+                            il.MarkLabel(lblNext);
+                        }
+
+                        var fnOnLoaded = RecurseInheritedTypes<MethodInfo>(type, (x) => x.GetMethod("OnLoaded", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new Type[0], null));
+                        if (fnOnLoaded != null)
+                        {
+                            il.Emit(OpCodes.Dup);
+                            il.Emit(OpCodes.Callvirt, fnOnLoaded);
+                        }
+                    }
+
+                    il.Emit(OpCodes.Ret);
+
+                    // Cache it, return it
+                    var del = m.CreateDelegate(Expression.GetFuncType(typeof(IDataReader), type));
+                    PocoFactories.Add(key, del);
+                    return del;
+                }
+                finally
+                {
+                    RWLock.ExitWriteLock();
+                }
+            }
+
+            private static void AddConverterToStack(ILGenerator il, Func<object, object> converter)
+            {
+                if (converter != null)
+                {
+                    // Add the converter
+                    int converterIndex = m_Converters.Count;
+                    m_Converters.Add(converter);
+
+                    // Generate IL to push the converter onto the stack
+                    il.Emit(OpCodes.Ldsfld, fldConverters);
+                    il.Emit(OpCodes.Ldc_I4, converterIndex);
+                    il.Emit(OpCodes.Callvirt, fnListGetItem);					// Converter
+                }
+            }
+
+            private static Func<object, object> GetConverter(bool forceDateTimesToUtc, PocoColumn pc, Type srcType, Type dstType)
+            {
+                Func<object, object> converter = null;
+
+                // Standard DateTime->Utc mapper
+                if (forceDateTimesToUtc && converter == null && srcType == typeof(DateTime) && (dstType == typeof(DateTime) || dstType == typeof(DateTime?)))
+                {
+                    converter = delegate(object src) { return new DateTime(((DateTime)src).Ticks, DateTimeKind.Utc); };
+                }
+
+                // Forced type conversion including integral types -> enum
+                if (converter == null)
+                {
+                    if (dstType.IsEnum && IsIntegralType(srcType))
+                    {
+                        if (srcType != typeof(int))
+                        {
+                            converter = delegate(object src) { return Convert.ChangeType(src, typeof(int), null); };
+                        }
+                    }
+                    else if (!dstType.IsAssignableFrom(srcType))
+                    {
+                        converter = delegate(object src) { return Convert.ChangeType(src, dstType, null); };
+                    }
+                }
+                return converter;
+            }
+
+            static T RecurseInheritedTypes<T>(Type t, Func<Type, T> cb)
+            {
+                while (t != null)
+                {
+                    T info = cb(t);
+                    if (info != null)
+                        return info;
+                    t = t.BaseType;
+                }
+                return default(T);
+            }
+
+            static Dictionary<Type, PocoData> m_PocoDatas = new Dictionary<Type, PocoData>();
+            static List<Func<object, object>> m_Converters = new List<Func<object, object>>();
+            static MethodInfo fnGetValue = typeof(IDataRecord).GetMethod("GetValue", new Type[] { typeof(int) });
+            static MethodInfo fnIsDBNull = typeof(IDataRecord).GetMethod("IsDBNull");
+            static FieldInfo fldConverters = typeof(PocoData).GetField("m_Converters", BindingFlags.Static | BindingFlags.GetField | BindingFlags.NonPublic);
+            static MethodInfo fnListGetItem = typeof(List<Func<object, object>>).GetProperty("Item").GetGetMethod();
+            static MethodInfo fnInvoke = typeof(Func<object, object>).GetMethod("Invoke");
+            public Type type;
+            public string[] QueryColumns { get; private set; }
+            public TableInfo TableInfo { get; private set; }
+            public Dictionary<string, PocoColumn> Columns { get; private set; }
+            Dictionary<string, Delegate> PocoFactories = new Dictionary<string, Delegate>();
         }
     }
 
