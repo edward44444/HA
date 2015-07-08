@@ -1,5 +1,6 @@
 ﻿using HA.Core;
 using HA.Model.Foundation;
+using HA.Persistence;
 using System;
 using System.Collections.Generic;
 using System.Data.SqlClient;
@@ -13,10 +14,8 @@ namespace HA.Console
     {
         static void Main(string[] args)
         {
-            var db = new Database("HA");
-            var lst = db.Fetch<BaseData>("");
-
-            lst.Where(t => t == null);
+            var db = new BasePersistence();
+            var lst = db.Fetch<BaseData>(t => t.CreateBy == "edward" || t.Name == "Bill");
         }
     }
 }
