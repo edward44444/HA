@@ -1126,6 +1126,28 @@ namespace HA.Core
         }
     }
 
+    public class Sql<T> : Sql
+    {
+        private readonly string _alias;
+
+        public Sql()
+        {
+        }
+
+        public Sql(string alias)
+        {
+            this._alias = alias;
+        }
+
+        public Sql<T> Where(Expression expression)
+        {
+            var alias = string.IsNullOrWhiteSpace(_alias) ? Database.EscapeTableName(Database.PocoData.ForType(typeof(T)).TableInfo.TableName) : _alias;
+            var expressionVisitor = new WhereClauseBuilder<T>(alias);
+            expressionVisitor.Visit(expression);
+            return (Sql<T>)Where(expressionVisitor.Sql, expressionVisitor.Arguments);
+        }
+    }
+
     //public class Sql<T> : Sql
     //{
     //    string _alias;

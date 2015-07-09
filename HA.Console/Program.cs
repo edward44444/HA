@@ -15,7 +15,8 @@ namespace HA.Console
         static void Main(string[] args)
         {
             var db = new BasePersistence();
-            var lst = db.Fetch<BaseData>(t => t.CreateBy == "edward" || t.Name == "Bill");
+            var testData = new { CreateBy = "edward", Name = "Bill" ,CreateOn=DateTime.Now};
+            var lst = db.Fetch<BaseData>(t => t.CreateBy == testData.CreateBy || t.Name == "Bill" || t.CreateOn == testData.CreateOn.AddDays(1));
         }
     }
 }
