@@ -60,6 +60,10 @@
       <Project>{b97d9470-acc2-4fc0-a393-40316c43cef0}</Project>
       <Name>HA.Persistence</Name>
     </ProjectReference>
+    <ProjectReference Include="..\HA.Service\HA.Service.csproj">
+      <Project>{31a18141-c77e-4cef-b00e-dff5edff5684}</Project>
+      <Name>HA.Service</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 

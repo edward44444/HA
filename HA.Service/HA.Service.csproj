@@ -39,8 +39,24 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Class1.cs" />
+    <Compile Include="BaseService.cs" />
+    <Compile Include="Foundation\BaseDataService.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+  <ItemGroup />
+  <ItemGroup>
+    <ProjectReference Include="..\HA.Core\HA.Core.csproj">
+      <Project>{c65e4ddd-b129-437c-9c13-b851c513974f}</Project>
+      <Name>HA.Core</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\HA.Model\HA.Model.csproj">
+      <Project>{cbcabccb-8380-44a8-a230-6b693bc460c8}</Project>
+      <Name>HA.Model</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\HA.Persistence\HA.Persistence.csproj">
+      <Project>{b97d9470-acc2-4fc0-a393-40316c43cef0}</Project>
+      <Name>HA.Persistence</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 

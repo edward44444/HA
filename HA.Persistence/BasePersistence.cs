@@ -9,8 +9,6 @@ using System.Linq.Expressions;
 
 namespace HA.Persistence
 {
-   
-
     public class BasePersistence
     {
         public Database Database { get; private set; }
@@ -20,11 +18,31 @@ namespace HA.Persistence
             Database = new Database("HA");
         }
 
-        public List<T> Fetch<T>(Expression<Func<T, bool>> predicate)
+        private IEnumerable<T> Query<T>(Expression<Func<T, bool>> predicate)
         {
             var sql = new Sql<T>();
             sql.Where(predicate);
-            return Database.Fetch<T>(sql);
+            return Database.Query<T>(sql);
+        }
+
+        public List<T> Fetch<T>(Expression<Func<T, bool>> predicate)
+        {
+            return Query(predicate).ToList();
+        }
+
+        public T FirstOrDefault<T>(Expression<Func<T, bool>> predicate)
+        {
+            return Query(predicate).FirstOrDefault();
+        }
+
+        public T Insert<T>(T model)
+        {
+            return (T)Database.Insert(model);
+        }
+
+        public void Insert<T>(List<T> collection)
+        {
+            Database.Insert(collection);
         }
     }
 }

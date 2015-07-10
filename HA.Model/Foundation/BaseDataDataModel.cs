@@ -10,7 +10,7 @@ namespace HA.Model.Foundation
 {
     [TableName("FD_BaseData")]
     [PrimaryKey("BDID")]
-    public class BaseData
+    public class BaseDataDataModel
     {
         /// <summary>
         /// 主键

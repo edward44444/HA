@@ -1,20 +1,41 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
 using System.Linq.Expressions;
-using System.Text;
-using System.Threading.Tasks;
 using System.Reflection;
+using System.Text;
+using System.Linq;
 
 namespace HA.Core
 {
-    public class WhereClauseBuilder<TModel> : ExpressionVisitor
+    public static class ExtensionClass
+    {
+        public static bool ExistsIn<T>(this T item, IEnumerable<T> collection)
+        {
+            return collection.Contains(item);
+        }
+    }
+
+    public class WhereClauseBuilder : ExpressionVisitor
     {
         private readonly StringBuilder _sb;
-
         private readonly string _alias;
-
         private readonly List<object> _args;
+        private string _methodName;
+
+        public string MethodName
+        {
+            get
+            {
+                string methodName = _methodName;
+                _methodName = null;
+                return methodName;
+            }
+            set
+            {
+                _methodName = value;
+            }
+        }
 
         public string Sql
         {
@@ -49,22 +70,59 @@ namespace HA.Core
             string operation;
             switch (node.NodeType)
             {
-                case ExpressionType.Add:
-                    operation = "+";
-                    break;
                 case ExpressionType.Equal:
                     operation = "=";
+                    break;
+                case ExpressionType.LessThan:
+                    operation = "<";
+                    break;
+                case ExpressionType.LessThanOrEqual:
+                    operation = "<=";
+                    break;
+                case ExpressionType.GreaterThan:
+                    operation = ">";
+                    break;
+                case ExpressionType.GreaterThanOrEqual:
+                    operation = ">=";
+                    break;
+                case ExpressionType.NotEqual:
+                    operation = "!=";
                     break;
                 case ExpressionType.OrElse:
                     operation = "OR";
                     break;
+                case ExpressionType.And:
+                case ExpressionType.AndAlso:
+                    operation = "AND";
+                    break;
                 default:
                     throw new NotSupportedException(node.NodeType.ToString());
             }
-            Visit(node.Left);
+            VisitLeft(node.Left);
             _sb.Append(" ").Append(operation).Append(" ");
-            Visit(node.Right);
+            VisitRight(node.Right);
             return node;
+        }
+
+        private void VisitLeft(Expression node)
+        {
+            Visit(node);
+        }
+
+        private void VisitRight(Expression node)
+        {
+            switch (node.NodeType)
+            {
+                case ExpressionType.MemberAccess:
+                     VisitConstant(Expression.Constant(GetValue((MemberExpression)node)));
+                     break;
+                case ExpressionType.Constant:
+                     VisitConstant((ConstantExpression)node);
+                     break;
+                default:
+                    Visit(node);
+                    break;
+            }
         }
 
         private object GetValue(MemberExpression node)
@@ -82,36 +140,77 @@ namespace HA.Core
 
         protected override Expression VisitMember(MemberExpression node)
         {
-            if (node.Member.DeclaringType != typeof(TModel))
-            {
-                var constantExpr = Expression.Constant(GetValue(node));
-                VisitConstant(constantExpr);
-                return node;
-            }
             var colAttr = node.Member.GetCustomAttribute<ColumnAttribute>(true);
-            if (colAttr != null)
-            {
-                _sb.Append(_alias).Append(".").Append(Database.EscapeSqlIdentifier(colAttr.Name));
-            }
-            else
-            {
-                _sb.Append(_alias).Append(".").Append(Database.EscapeSqlIdentifier(node.Member.Name));
-            }
+            _sb.Append(_alias).Append(".").Append(Database.EscapeSqlIdentifier(colAttr != null ? colAttr.Name : node.Member.Name));
             return node;
         }
 
         protected override Expression VisitConstant(ConstantExpression node)
         {
-            _sb.Append("@").Append(_args.Count);
-            _args.Add(node.Value);
+            if (node.Value is IEnumerable && !(node.Value is string) && !(node.Value is byte[]))
+            {
+                _sb.Append("( @").Append(_args.Count).Append(" )");
+            }
+            else
+            {
+                _sb.Append("@").Append(_args.Count);
+            }
+            switch (MethodName)
+            {
+                case "StartsWith":
+                    _args.Add(node.Value.ToString() + "%");
+                    break;
+                case "EndsWith":
+                    _args.Add("%" + node.Value.ToString());
+                    break;
+                case "Contains":
+                    _args.Add("%" + node.Value.ToString() + "%");
+                    break;
+                default:
+                    _args.Add(node.Value);
+                    break;
+            }
+            return node;
+        }
+
+        protected override Expression VisitListInit(ListInitExpression node)
+        {
             return node;
         }
 
         protected override Expression VisitMethodCall(MethodCallExpression node)
         {
-            var constantExpr = Expression.Constant(GetValue(node));
-            VisitConstant(constantExpr);
-            return node;
+            MethodName = node.Method.Name;
+            switch (node.Method.Name)
+            {
+                case "Equals":
+                    VisitLeft(node.Object);
+                    _sb.Append(" = ");
+                    VisitRight(node.Arguments[0]);
+                    return node;
+                case "ExistsIn":
+                    VisitLeft(node.Arguments[0]);
+                    _sb.Append(" IN ");
+                    VisitRight(node.Arguments[1]);
+                    return node;
+                case "StartsWith":
+                    VisitLeft(node.Object);
+                    _sb.Append(" LIKE ");
+                    VisitRight(node.Arguments[0]);
+                    return node;
+                case "EndsWith":
+                    VisitLeft(node.Object);
+                    _sb.Append(" LIKE ");
+                    VisitRight(node.Arguments[0]);
+                    return node;
+                case "Contains":
+                    VisitLeft(node.Object);
+                    _sb.Append(" LIKE ");
+                    VisitRight(node.Arguments[0]);
+                    return node;
+                default:
+                    return VisitConstant(Expression.Constant(GetValue(node)));
+            }
         }
     }
 }

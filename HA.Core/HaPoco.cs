@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Configuration;
 using System.Data;
 using System.Data.Common;
+using System.Data.SqlClient;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -254,6 +255,10 @@ namespace HA.Core
                 {
                     p.Value = (int)item;
                 }
+                else if (t == typeof(DateTime)&&Convert.ToDateTime(p.Value).Year==1)
+                {
+                    p.Value = "1900-01-01";
+                }
                 else if (t == typeof(Guid))
                 {
                     p.Value = item.ToString();
@@ -464,6 +469,11 @@ namespace HA.Core
             }
         }
 
+        public IEnumerable<T> Query<T>(Sql sql)
+        {
+            return Query<T>(sql.SQL, sql.Arguments);
+        }
+
         // Return a typed list of pocos
         public List<T> Fetch<T>(string sql, params object[] args)
         {
@@ -473,6 +483,148 @@ namespace HA.Core
         public List<T> Fetch<T>(Sql sql)
         {
             return Fetch<T>(sql.SQL, sql.Arguments);
+        }
+
+        public object Insert(string tableName, string primaryKeyName, bool autoIncrement, object poco)
+        {
+            try
+            {
+                OpenSharedConnection();
+                try
+                {
+                    using (var cmd = CreateCommand(_sharedConnection, ""))
+                    {
+                        var pd = PocoData.ForObject(poco, primaryKeyName);
+                        var names = new List<string>();
+                        var values = new List<string>();
+                        var index = 0;
+                        foreach (var c in pd.Columns)
+                        {
+                            // Don't insert result columns
+                            if (c.Value.ResultColumn)
+                                continue;
+
+                            // Don't insert the primary key (except under oracle where we need bring in the next sequence value)
+                            if (autoIncrement && primaryKeyName != null && string.Compare(c.Key, primaryKeyName, true) == 0)
+                            {
+                                continue;
+                            }
+
+                            names.Add(EscapeSqlIdentifier(c.Key));
+                            values.Add(string.Format("@{0}", index++));
+                            AddParam(cmd, c.Value.GetValue(poco));
+                        }
+
+                        cmd.CommandText = string.Format("INSERT INTO {0} ({1}) VALUES ({2})",
+                                EscapeTableName(tableName),
+                                string.Join(",", names.ToArray()),
+                                string.Join(",", values.ToArray())
+                                );
+
+                        if (!autoIncrement)
+                        {
+                            DoPreExecute(cmd);
+                            cmd.ExecuteNonQuery();
+                            OnExecutedCommand(cmd);
+                            return true;
+                        }
+
+                        cmd.CommandText += ";\nSELECT SCOPE_IDENTITY() AS NewID;";
+                        DoPreExecute(cmd);
+                        object id = cmd.ExecuteScalar();
+                        OnExecutedCommand(cmd);
+
+                        // Assign the ID back to the primary key property
+                        if (primaryKeyName != null)
+                        {
+                            PocoColumn pc;
+                            if (pd.Columns.TryGetValue(primaryKeyName, out pc))
+                            {
+                                pc.SetValue(poco, pc.ChangeType(id));
+                            }
+                        }
+                        return poco;
+                    }
+                }
+                finally
+                {
+                    CloseSharedConnection();
+                }
+            }
+            catch (Exception x)
+            {
+                OnException(x);
+                throw;
+            }
+        }
+
+        // Insert an annotated poco object
+        public object Insert(object poco)
+        {
+            var pd = PocoData.ForType(poco.GetType());
+            return Insert(pd.TableInfo.TableName, pd.TableInfo.PrimaryKey, pd.TableInfo.AutoIncrement, poco);
+        }
+
+        private DataTable CopyToDataTable<T>(List<T> collection)
+        {
+            var pd = PocoData.ForType(typeof(T));
+            var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey).ToList();
+            DataTable dt = new DataTable();
+            foreach (var column in columns)
+            {
+                dt.Columns.Add(column.PropertyInfo.Name);
+            }
+            foreach (var poco in collection)
+            {
+                object[] values = new object[columns.Count];
+                for (int i = 0; i < columns.Count; i++)
+                {
+                    values[i] = columns[i].GetValue(poco);
+                    if (values[i] == null)
+                    {
+                        values[i] = string.Empty;
+                    }
+                    else if (values[i].GetType() == typeof(DateTime) && Convert.ToDateTime(values[i]).Year == 1)
+                    {
+                        values[i] = "1900-01-01";
+                    }
+                }
+                dt.Rows.Add(values);
+            }
+            return dt;
+        }
+
+        public void Insert<T>(List<T> collection)
+        {
+            var pd = PocoData.ForType(typeof(T));
+            var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey).ToList();
+            var dt = CopyToDataTable(collection);
+            try
+            {
+                OpenSharedConnection();
+                try
+                {
+                    using (SqlBulkCopy bulkCopy = new SqlBulkCopy((SqlConnection)_sharedConnection, SqlBulkCopyOptions.Default, (SqlTransaction)_transaction))
+                    {
+                        bulkCopy.DestinationTableName = pd.TableInfo.TableName;
+                        foreach (var column in columns)
+                        {
+                            bulkCopy.ColumnMappings.Add(column.PropertyInfo.Name, column.ColumnName);
+                        }
+                        bulkCopy.WriteToServer(dt);
+                        bulkCopy.Close();
+                    }
+                }
+                finally
+                {
+                    CloseSharedConnection();
+                }
+            }
+            catch (Exception x)
+            {
+                OnException(x);
+                throw;
+            }
         }
 
         public int CommandTimeout { get; set; }
@@ -1142,7 +1294,7 @@ namespace HA.Core
         public Sql<T> Where(Expression expression)
         {
             var alias = string.IsNullOrWhiteSpace(_alias) ? Database.EscapeTableName(Database.PocoData.ForType(typeof(T)).TableInfo.TableName) : _alias;
-            var expressionVisitor = new WhereClauseBuilder<T>(alias);
+            var expressionVisitor = new WhereClauseBuilder(alias);
             expressionVisitor.Visit(expression);
             return (Sql<T>)Where(expressionVisitor.Sql, expressionVisitor.Arguments);
         }

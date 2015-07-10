@@ -4,10 +4,9 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace HA.Service
+namespace HA.Persistence.Foundation
 {
-    public class Class1
+    public class BaseDataPersistence : BasePersistence
     {
-
     }
 }
