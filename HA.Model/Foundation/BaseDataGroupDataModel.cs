@@ -46,5 +46,8 @@ namespace HA.Model.Foundation
         [Column("CreatedBy")]
         [DisplayName("创建人")]
         public string CreatedBy { get; set; }
+
+        [ChildColumn]
+        public List<BaseDataDataModel> BaseDataList { get; set; }
     }
 }

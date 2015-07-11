@@ -40,9 +40,19 @@ namespace HA.Persistence
             return (T)Database.Insert(model);
         }
 
-        public void Insert<T>(List<T> collection)
+        public void BulkCopy<T>(List<T> collection)
         {
-            Database.Insert(collection);
+            Database.BulkCopy(collection);
+        }
+
+        public int Insert<T>(List<T> collection,Func<string, T, string> sqlRebuild=null)
+        {
+           return Database.Insert(collection,sqlRebuild);
+        }
+
+        public int Insert<T>(List<T> collection,string whereSql)
+        {
+            return Database.Insert(collection, whereSql);
         }
     }
 }

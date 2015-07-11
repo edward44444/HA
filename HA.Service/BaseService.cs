@@ -32,9 +32,19 @@ namespace HA.Service
             return Persistence.Insert(model);
         }
 
-        public void Insert<T>(List<T> collection)
+        public void BulkCopy<T>(List<T> collection)
         {
-            Persistence.Insert(collection);
+            Persistence.BulkCopy(collection);
+        }
+
+        public void Insert<T>(List<T> collection, Func<string, T, string> sqlRebuild = null)
+        {
+            Persistence.Insert(collection, sqlRebuild);
+        }
+
+        public void Insert<T>(List<T> collection, string whereSql)
+        {
+            Persistence.Insert(collection, whereSql);
         }
     }
 }

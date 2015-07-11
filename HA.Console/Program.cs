@@ -25,7 +25,7 @@ namespace HA.Console
             var listGroup = new List<BaseDataGroupDataModel>();
             listGroup.Add(new BaseDataGroupDataModel { Code = "A", BaseDataList = list });
             listGroup.Add(new BaseDataGroupDataModel { Code = "B", BaseDataList = list2 });
-            service.Insert(listGroup);
+            service.Insert(listGroup,"WHERE 1=1");
 
         }
     }

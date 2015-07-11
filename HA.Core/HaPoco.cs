@@ -732,7 +732,7 @@ END CATCH
             {
                 values.Add("(SCOPE_IDENTITY()," + string.Join(",", GetInsertValueStringList(columns, poco)) + ")");
             }
-            sql.AppendFormat("INSERT {0} ({1}) VALUES {2}", EscapeTableName(pd.TableInfo.TableName), colsStr, string.Join(",", values)).AppendLine();
+            sql.AppendFormat("INSERT {0} ({1}) VALUES {2}", EscapeTableName(pd.TableInfo.TableName), colsStr, string.Join(",", values));
         }
 
         private static List<string> GetInsertValueStringList(IList<PocoColumn> columns, object poco)
@@ -767,7 +767,7 @@ END CATCH
             return values;
         }
 
-        private int BulkInsert<T>(IList<T> collection, Func<string, T, string> sqlRebuild)
+        public int Insert<T>(IList<T> collection, Func<string, T, string> sqlRebuild=null)
         {
             try
             {
@@ -792,9 +792,65 @@ END CATCH
             }
         }
 
-        public int Insert<T>(IList<T> collection, Func<string, T, string> sqlRebuild = null)
+        private int BulkInsertProcess<T>(IList<T> collection, string whereSql)
         {
-            return BulkInsert(collection, sqlRebuild);
+            try
+            {
+                OpenSharedConnection();
+                using (var cmd = CreateCommand(_sharedConnection, ""))
+                {
+                    var pd = PocoData.ForType(typeof(T));
+                    var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey).ToList();
+                    string colsStr = string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
+                    StringBuilder sql = new StringBuilder();
+                    sql.AppendLine("IF(OBJECT_ID('tempdb..#T1') IS NOT NULL) DROP TABLE #T1");
+                    sql.AppendFormat("SELECT {0} INTO #T1 FROM {1} WHERE 1=2", colsStr, EscapeTableName(pd.TableInfo.TableName)).AppendLine();
+                    foreach (var poco in collection)
+                    {
+                        var values = GetInsertValueStringList(columns, poco);
+                        sql.AppendFormat(@"INSERT #T1 VALUES ({0});", string.Join(",", values)).AppendLine();
+                    }
+                    sql.AppendFormat(@"INSERT {0} ({1}) SELECT {1} FROM #T1", EscapeTableName(pd.TableInfo.TableName), colsStr).AppendLine();
+                    if (!string.IsNullOrEmpty(whereSql))
+                    {
+                        sql.AppendLine(whereSql);
+                    }
+                    cmd.CommandText = sql.ToString();
+                    DoPreExecute(cmd);
+                    int returnValue = cmd.ExecuteNonQuery();
+                    OnExecutedCommand(cmd);
+                    return returnValue;
+                }
+            }
+            finally
+            {
+                CloseSharedConnection();
+            }
+        }
+
+        public int Insert<T>(IEnumerable<T> collection, string whereSql)
+        {
+            try
+            {
+                int returnValue = 0;
+                int rowIndex = 0;
+                int rowCount = collection.Count();
+                using (var scope = GetTransaction())
+                {
+                    while (rowIndex < rowCount)
+                    {
+                        returnValue += BulkInsertProcess<T>(collection.Skip(rowIndex).Take(1000).ToList(), whereSql);
+                        rowIndex += 1000;
+                    }
+                    scope.Complete();
+                }
+                return returnValue;
+            }
+            catch (Exception x)
+            {
+                OnException(x);
+                throw;
+            }
         }
 
         public int CommandTimeout { get; set; }
