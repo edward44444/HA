@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Data.SqlClient;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -14,6 +15,27 @@ namespace HA.Console
     class Program
     {
         static void Main(string[] args)
+        {
+            //Insert();
+
+            Update();
+        }
+
+        static Expression<Func<T, object>>[] GetP<T>(params Expression<Func<T, object>>[] expressions)
+        {
+            return expressions;
+        }
+
+        private static void Update()
+        {
+            var service = new BaseDataService();
+            var list = service.Fetch<BaseDataDataModel>(t=>t.RowStatus==0);
+            service.Update(list[0]);
+            service.Update(list[0], t => t.RowStatus);
+            service.Update(new Expression<Func<BaseDataDataModel, object>>[]{t => t.Name, t => t.GroupCode}, list, t => t.RowStatus, t => t.Code);
+        }
+
+        private static void Insert()
         {
             var service = new BaseDataService();
             var list = new List<BaseDataDataModel>();
@@ -25,8 +47,7 @@ namespace HA.Console
             var listGroup = new List<BaseDataGroupDataModel>();
             listGroup.Add(new BaseDataGroupDataModel { Code = "A", BaseDataList = list });
             listGroup.Add(new BaseDataGroupDataModel { Code = "B", BaseDataList = list2 });
-            service.Insert(listGroup,"WHERE 1=1");
-
+            service.Insert(listGroup);
         }
     }
 }

@@ -425,6 +425,17 @@ namespace HA.Core
             return tc >= TypeCode.SByte && tc <= TypeCode.Decimal;
         }
 
+        public static string GetColumnName<T>(Expression<Func<T, object>> columnExpression)
+        {
+            var memberExpression = columnExpression.Body as MemberExpression;
+            if (memberExpression == null)
+            {
+                memberExpression = (columnExpression.Body as UnaryExpression).Operand as MemberExpression;
+            }
+            var pd = PocoData.ForType(typeof(T));
+            return pd.Columns.FirstOrDefault(u => u.Value.PropertyInfo.Name == memberExpression.Member.Name).Value.ColumnName;
+        }
+
         string AddSelectClause<T>(string sql)
         {
             if (sql.StartsWith(";"))
@@ -509,7 +520,7 @@ namespace HA.Core
             return Fetch<T>(sql.SQL, sql.Arguments);
         }
 
-        public object Insert(string tableName, string primaryKeyName, bool autoIncrement, object poco)
+        private object Insert(string tableName, string primaryKeyName, bool autoIncrement, object poco)
         {
             try
             {
@@ -738,9 +749,9 @@ END CATCH
         private static List<string> GetInsertValueStringList(IList<PocoColumn> columns, object poco)
         {
             var values = new List<string>();
-            foreach (var column in columns)
+            for (var i = 0; i < columns.Count; i++)
             {
-                var value = column.GetValue(poco);
+                var value = columns[i].GetValue(poco);
                 if (value == null)
                 {
                     values.Add("''");
@@ -755,7 +766,7 @@ END CATCH
                 {
                     value = Convert.ToDateTime(value).Year == 1 ? "1900-01-01" : Convert.ToDateTime(value).ToString("yyyy-MM-dd HH:mm:ss.fff");
                 }
-                if (IsNumericType(column.PropertyInfo.PropertyType))
+                if (IsNumericType(columns[i].PropertyInfo.PropertyType))
                 {
                     values.Add(value.ToString());
                 }
@@ -851,6 +862,199 @@ END CATCH
                 OnException(x);
                 throw;
             }
+        }
+
+        // Update a record with values from a poco.  primary key value can be either supplied or read from the poco
+        private int Update(string tableName, string primaryKeyName, object poco, object primaryKeyValue, IList<string> columns)
+        {
+            try
+            {
+                OpenSharedConnection();
+                try
+                {
+                    using (var cmd = CreateCommand(_sharedConnection, ""))
+                    {
+                        var sb = new StringBuilder();
+                        var index = 0;
+                        var pd = PocoData.ForObject(poco, primaryKeyName);
+                        if (columns == null)
+                        {
+                            foreach (var i in pd.Columns)
+                            {
+                                // Don't update the primary key, but grab the value if we don't have it
+                                if (string.Compare(i.Key, primaryKeyName, true) == 0)
+                                {
+                                    if (primaryKeyValue == null)
+                                        primaryKeyValue = i.Value.GetValue(poco);
+                                    continue;
+                                }
+
+                                // Dont update result only columns
+                                if (i.Value.ResultColumn)
+                                    continue;
+
+                                // Build the sql
+                                if (index > 0)
+                                    sb.Append(", ");
+                                sb.AppendFormat("{0} = @{1}", EscapeSqlIdentifier(i.Key), index++);
+
+                                // Store the parameter in the command
+                                AddParam(cmd, i.Value.GetValue(poco));
+                            }
+                        }
+                        else
+                        {
+                            foreach (var colname in columns)
+                            {
+                                var pc = pd.Columns[colname];
+
+                                // Build the sql
+                                if (index > 0)
+                                    sb.Append(", ");
+                                sb.AppendFormat("{0} = @{1}", EscapeSqlIdentifier(colname), index++);
+
+                                // Store the parameter in the command
+                                AddParam(cmd, pc.GetValue(poco));
+                            }
+
+                            // Grab primary key value
+                            if (primaryKeyValue == null)
+                            {
+                                var pc = pd.Columns[primaryKeyName];
+                                primaryKeyValue = pc.GetValue(poco);
+                            }
+
+                        }
+
+                        cmd.CommandText = string.Format("UPDATE {0} SET {1} WHERE {2} = @{3}",
+                            EscapeTableName(tableName), sb.ToString(), EscapeSqlIdentifier(primaryKeyName), index++);
+                        AddParam(cmd, primaryKeyValue);
+
+                        DoPreExecute(cmd);
+
+                        // Do it
+                        var retv = cmd.ExecuteNonQuery();
+                        OnExecutedCommand(cmd);
+                        return retv;
+                    }
+                }
+                finally
+                {
+                    CloseSharedConnection();
+                }
+            }
+            catch (Exception x)
+            {
+                OnException(x);
+                throw;
+            }
+        }
+
+        public int Update<T>(T poco, params Expression<Func<T, object>>[] expressions)
+        {
+            var pd = PocoData.ForType(typeof(T));
+            if (expressions.Length == 0)
+            {
+                return Update(pd.TableInfo.TableName, pd.TableInfo.PrimaryKey, poco, null, null);
+            }
+            return Update(pd.TableInfo.TableName, pd.TableInfo.PrimaryKey, poco, null, (from c in expressions select GetColumnName(c)).ToList());
+        }
+
+        private int BulkUpdateProcess<T>(string tableName, IList<string> primaryKeyNames, IList<T> collection, IList<string> columnNames, Func<string, T, string> sqlRebuild)
+        {
+            try
+            {
+                OpenSharedConnection();
+                using (var cmd = CreateCommand(_sharedConnection, ""))
+                {
+                    var pd = PocoData.ForType(typeof(T));
+                    var columns = pd.Columns.Values.Where(c => columnNames.Contains(c.ColumnName)).ToList();
+                    var primaryKeyColumns = pd.Columns.Values.Where(c => primaryKeyNames.Contains(c.ColumnName)).ToList();
+                    StringBuilder sql = new StringBuilder();
+                    sql.AppendLine("BEGIN TRY");
+                    foreach (var poco in collection)
+                    {
+                        var setSqls = new List<string>();
+                        var whereSqls = new List<string>();
+                        var values = GetInsertValueStringList(columns, poco);
+                        for (var i = 0; i < columns.Count; i++)
+                        {
+                            setSqls.Add(string.Format("{0}={1}", EscapeSqlIdentifier(columns[i].ColumnName), values[i]));
+                        }
+                        var primaryKeyValues = GetInsertValueStringList(primaryKeyColumns, poco);
+                        for (var i = 0; i < primaryKeyColumns.Count; i++)
+                        {
+                            whereSqls.Add(string.Format("{0}={1}", EscapeSqlIdentifier(primaryKeyColumns[i].ColumnName), primaryKeyValues[i]));
+                        }
+                        string updateSql = string.Format(@"UPDATE {0} SET {1} WHERE {2};", EscapeSqlIdentifier(tableName), string.Join(",", setSqls), string.Join(" AND ", whereSqls));
+                        if (sqlRebuild != null)
+                        {
+                            updateSql = sqlRebuild(updateSql, poco);
+                        }
+                        sql.AppendLine(updateSql);
+                    }
+                    sql.AppendFormat(@"
+END TRY
+BEGIN CATCH
+    DECLARE @ErrorMessage NVARCHAR(4000)=ERROR_MESSAGE();
+    DECLARE @ErrorSeverity INT=ERROR_SEVERITY();
+    DECLARE @ErrorState INT=ERROR_STATE();
+    RAISERROR (@ErrorMessage, @ErrorSeverity,@ErrorState);
+END CATCH
+");
+                    cmd.CommandText = sql.ToString();
+                    DoPreExecute(cmd);
+                    int returnValue = cmd.ExecuteNonQuery();
+                    OnExecutedCommand(cmd);
+                    return returnValue;
+                }
+            }
+            finally
+            {
+                CloseSharedConnection();
+            }
+        }
+
+        public int BulkUpdate<T>(string tableName, IList<string> primaryKeyNames, IList<T> collection, IList<string> columnNames, Func<string, T, string> sqlRebuild)
+        {
+            try
+            {
+                int returnValue = 0;
+                int rowIndex = 0;
+                int rowCount = collection.Count();
+                using (var scope = GetTransaction())
+                {
+                    while (rowIndex < rowCount)
+                    {
+                        returnValue += BulkUpdateProcess<T>(tableName, primaryKeyNames, collection.Skip(rowIndex).Take(1000).ToList(), columnNames, sqlRebuild);
+                        rowIndex += 1000;
+                    }
+                    scope.Complete();
+                }
+                return returnValue;
+            }
+            catch (Exception x)
+            {
+                OnException(x);
+                throw;
+            }
+        }
+
+        public int Update<T>(IList<T> collection,params Expression<Func<T, object>>[] expressions)
+        {
+            var pd = PocoData.ForType(typeof(T));
+            return BulkUpdate(pd.TableInfo.TableName, new string[] { pd.TableInfo.PrimaryKey }, collection, (from c in expressions select GetColumnName(c)).ToList(), null);
+        }
+
+        public int Update<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, params Expression<Func<T, object>>[] expressions)
+        {
+            return Update(primaryKeyExpressions, collection, null, expressions);
+        }
+
+        public int Update<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection,Func<string, T, string> sqlRebuild, params Expression<Func<T, object>>[] expressions)
+        {
+            var pd = PocoData.ForType(typeof(T));
+            return BulkUpdate(pd.TableInfo.TableName, (from c in primaryKeyExpressions select GetColumnName(c)).ToList(), collection, (from c in expressions select GetColumnName(c)).ToList(), sqlRebuild);
         }
 
         public int CommandTimeout { get; set; }

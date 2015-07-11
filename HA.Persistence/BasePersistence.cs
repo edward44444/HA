@@ -45,7 +45,12 @@ namespace HA.Persistence
             Database.BulkCopy(collection);
         }
 
-        public int Insert<T>(List<T> collection,Func<string, T, string> sqlRebuild=null)
+        public int Insert<T>(List<T> collection)
+        {
+            return Database.Insert(collection, null);
+        }
+
+        public int Insert<T>(List<T> collection,Func<string, T, string> sqlRebuild)
         {
            return Database.Insert(collection,sqlRebuild);
         }
@@ -53,6 +58,26 @@ namespace HA.Persistence
         public int Insert<T>(List<T> collection,string whereSql)
         {
             return Database.Insert(collection, whereSql);
+        }
+
+        public int Update<T>(T poco, params Expression<Func<T, object>>[] expressions)
+        {
+            return Database.Update(poco, expressions);
+        }
+
+        public int Update<T>(IList<T> collection,params Expression<Func<T, object>>[] expressions)
+        {
+            return Database.Update(collection, expressions);
+        }
+
+        public int Update<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, params Expression<Func<T, object>>[] expressions)
+        {
+            return Database.Update(primaryKeyExpressions, collection, expressions);
+        }
+
+        public int Update<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection,Func<string, T, string> sqlRebuild, params Expression<Func<T, object>>[] expressions)
+        {
+            return Database.Update(primaryKeyExpressions, collection, sqlRebuild,expressions);
         }
     }
 }

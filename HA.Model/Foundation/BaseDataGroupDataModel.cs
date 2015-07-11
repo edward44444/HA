@@ -47,6 +47,13 @@ namespace HA.Model.Foundation
         [DisplayName("创建人")]
         public string CreatedBy { get; set; }
 
+        /// <summary>
+        /// 行状态
+        /// </summary>
+        [Column("RowStatus")]
+        [DisplayName("行状态")]
+        public int RowStatus { get; set; }
+
         [ChildColumn]
         public List<BaseDataDataModel> BaseDataList { get; set; }
     }
