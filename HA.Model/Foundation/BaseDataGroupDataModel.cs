@@ -8,36 +8,29 @@ using System.Threading.Tasks;
 
 namespace HA.Model.Foundation
 {
-    [TableName("FD_BaseData")]
-    [PrimaryKey("BDID")]
-    public class BaseDataDataModel
+    [TableName("FD_BaseDataGroup")]
+    [PrimaryKey("BDGID")]
+    public class BaseDataGroupDataModel
     {
         /// <summary>
         /// 主键
         /// </summary>
-        [Column("BDID")]
+        [Column("BDGID")]
         [DisplayName("主键")]
         public int Id { get; set; }
 
         /// <summary>
         /// 分组编码
         /// </summary>
-        [Column("BDGroupCode")]
+        [Column("BDGCode")]
         [DisplayName("分组编码")]
-        public string GroupCode { get; set; }
-
-        /// <summary>
-        /// 编码
-        /// </summary>
-        [Column("BDCode")]
-        [DisplayName("编码")]
         public string Code { get; set; }
 
         /// <summary>
-        /// 名称
+        /// 分组名称
         /// </summary>
-        [Column("BDName")]
-        [DisplayName("名称")]
+        [Column("BDGName")]
+        [DisplayName("分组名称")]
         public string Name { get; set; }
 
         /// <summary>

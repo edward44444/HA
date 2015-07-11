@@ -17,9 +17,16 @@ namespace HA.Console
         {
             var service = new BaseDataService();
             var list = new List<BaseDataDataModel>();
-            list.Add(new BaseDataDataModel { GroupCode = "X", Code = "1", Name = "edward4", CreateBy = "edward" });
-            list.Add(new BaseDataDataModel { GroupCode = "X", Code = "1", Name = "edward5", CreateBy = "edward" });
-            service.Insert(list);
+            list.Add(new BaseDataDataModel { GroupCode = "X", Code = "1", Name = "edward4", CreatedBy = "edward" });
+            list.Add(new BaseDataDataModel { GroupCode = "X", Code = "1", Name = "edward5", CreatedBy = "edward" });
+            var list2 = new List<BaseDataDataModel>();
+            //list2.Add(new BaseDataDataModel { GroupCode = "Y", Code = "1", Name = "edward4", CreatedBy = "edward" });
+            //list2.Add(new BaseDataDataModel { GroupCode = "Y", Code = "1", Name = "edward5", CreatedBy = "edward" });
+            var listGroup = new List<BaseDataGroupDataModel>();
+            listGroup.Add(new BaseDataGroupDataModel { Code = "A", BaseDataList = list });
+            listGroup.Add(new BaseDataGroupDataModel { Code = "B", BaseDataList = list2 });
+            service.Insert(listGroup);
+
         }
     }
 }

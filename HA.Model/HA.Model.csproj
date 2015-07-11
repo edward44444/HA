@@ -40,6 +40,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Foundation\BaseDataDataModel.cs" />
+    <Compile Include="Foundation\BaseDataGroupDataModel.cs" />
     <Compile Include="ModelTemplate.cs">
       <AutoGen>True</AutoGen>
       <DesignTime>True</DesignTime>

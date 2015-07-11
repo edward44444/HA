@@ -32,6 +32,13 @@ namespace HA.Core
         public ResultColumnAttribute(string name) : base(name) { }
     }
 
+    [AttributeUsage(AttributeTargets.Property)]
+    public class ChildColumnAttribute:ResultColumnAttribute
+    {
+        public ChildColumnAttribute() { }
+        public ChildColumnAttribute(string name) : base(name) { }
+    }
+
     // Specify the table name of a poco
     [AttributeUsage(AttributeTargets.Class)]
     public class TableNameAttribute : Attribute
@@ -51,6 +58,16 @@ namespace HA.Core
         }
         public string Value { get; private set; }
         public bool AutoIncrement { get; set; }
+    }
+
+    [AttributeUsage(AttributeTargets.Class)]
+    public class ForeighKeyAttribute : Attribute
+    {
+        public ForeighKeyAttribute(string foreighKey)
+        {
+            Value = foreighKey;
+        }
+        public string Value { get; private set; }
     }
 
     // Results from paged request
@@ -75,6 +92,7 @@ namespace HA.Core
     {
         public string TableName { get; set; }
         public string PrimaryKey { get; set; }
+        public string Foreignkey { get; set; }
         public bool AutoIncrement { get; set; }
     }
 
@@ -221,7 +239,7 @@ namespace HA.Core
                     throw new ArgumentOutOfRangeException(string.Format("Parameter '@{0}' specified but only {1} parameters supplied (in `{2}`)", paramIndex, args_src.Length, _sql));
                 arg_val = args_src[paramIndex];
                 // Expand collections to parameter lists
-                if ((arg_val as IEnumerable) != null && (arg_val as string) == null && (arg_val as byte[]) == null)
+                if (arg_val is IEnumerable && !(arg_val is string) && !(arg_val is byte[]))
                 {
                     var sb = new StringBuilder();
                     foreach (var i in arg_val as IEnumerable)
@@ -401,6 +419,12 @@ namespace HA.Core
             return string.Format("[{0}]", str);
         }
 
+        public static bool IsNumericType(Type type)
+        {
+            var tc = Type.GetTypeCode(type);
+            return tc >= TypeCode.SByte && tc <= TypeCode.Decimal;
+        }
+
         string AddSelectClause<T>(string sql)
         {
             if (sql.StartsWith(";"))
@@ -565,7 +589,7 @@ namespace HA.Core
             return Insert(pd.TableInfo.TableName, pd.TableInfo.PrimaryKey, pd.TableInfo.AutoIncrement, poco);
         }
 
-        private DataTable CopyToDataTable<T>(List<T> collection)
+        private DataTable CopyToDataTable<T>(IList<T> collection)
         {
             var pd = PocoData.ForType(typeof(T));
             var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey).ToList();
@@ -594,7 +618,7 @@ namespace HA.Core
             return dt;
         }
 
-        public void Insert<T>(List<T> collection)
+        public void BulkCopy<T>(IList<T> collection)
         {
             var pd = PocoData.ForType(typeof(T));
             var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey).ToList();
@@ -625,6 +649,152 @@ namespace HA.Core
                 OnException(x);
                 throw;
             }
+        }
+
+        private int BulkInsertProcess<T>(IList<T> collection, Func<string, T, string> sqlRebuild)
+        {
+            try
+            {
+                OpenSharedConnection();
+                using (var cmd = CreateCommand(_sharedConnection, ""))
+                {
+                    var sql = new StringBuilder();
+                    sql.AppendLine("BEGIN TRY");
+                    BuildBulkInsertSql(collection, sql, sqlRebuild);
+                    sql.AppendLine(@"
+END TRY
+BEGIN CATCH
+    DECLARE @ErrorMessage NVARCHAR(4000)=ERROR_MESSAGE();
+    DECLARE @ErrorSeverity INT=ERROR_SEVERITY();
+    DECLARE @ErrorState INT=ERROR_STATE();
+    RAISERROR (@ErrorMessage, @ErrorSeverity,@ErrorState);
+END CATCH
+");
+                    cmd.CommandText = sql.ToString();
+                    DoPreExecute(cmd);
+                    int returnValue = cmd.ExecuteNonQuery();
+                    OnExecutedCommand(cmd);
+                    return returnValue;
+                }
+            }
+            finally
+            {
+                CloseSharedConnection();
+            }
+        }
+
+        private void BuildBulkInsertSql<T>(IList<T> collection, StringBuilder sql, Func<string, T, string> sqlRebuild)
+        {
+            var pd = PocoData.ForType(typeof(T));
+            var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey).ToList();
+            var colsStr = string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
+            foreach (var poco in collection)
+            {
+                var values = GetInsertValueStringList(columns, poco);
+                var insertSql = string.Format(@"INSERT {0} ({1}) VALUES ({2});", EscapeTableName(pd.TableInfo.TableName), colsStr, string.Join(",", values));
+
+                var childColumns = pd.Columns.Values.Where(c => c.ChildColumn == true).ToList();
+                if (childColumns.Count > 0)
+                {
+                    var sqlAppend = new StringBuilder();
+                    foreach (var c in childColumns)
+                    {
+                        var value = c.GetValue(poco);
+                        if(value==null)
+                        {
+                            continue;
+                        }
+                        var childItems = value as IList;
+                        if (childItems != null && childItems.Count==0)
+                        {
+                            continue;
+                        }
+                        childItems = childItems == null ? new object[] { value } : childItems;
+                        BuildChildBulkInsertSql(childItems[0].GetType(), childItems, sqlAppend);
+                    }
+                    insertSql += sqlAppend.ToString();
+                }
+                if (sqlRebuild != null)
+                {
+                    insertSql = sqlRebuild(insertSql, poco);
+                }
+                sql.AppendLine(insertSql);
+            }
+        }
+
+        private void BuildChildBulkInsertSql(Type type,IList collection, StringBuilder sql)
+        {
+            var pd = PocoData.ForType(type);
+            var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey && c.ColumnName != pd.TableInfo.Foreignkey).ToList();
+            var colsStr = EscapeSqlIdentifier(pd.TableInfo.Foreignkey) + "," + string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
+            var values = new List<string>();
+            foreach (var poco in collection)
+            {
+                values.Add("(SCOPE_IDENTITY()," + string.Join(",", GetInsertValueStringList(columns, poco)) + ")");
+            }
+            sql.AppendFormat("INSERT {0} ({1}) VALUES {2}", EscapeTableName(pd.TableInfo.TableName), colsStr, string.Join(",", values)).AppendLine();
+        }
+
+        private static List<string> GetInsertValueStringList(IList<PocoColumn> columns, object poco)
+        {
+            var values = new List<string>();
+            foreach (var column in columns)
+            {
+                var value = column.GetValue(poco);
+                if (value == null)
+                {
+                    values.Add("''");
+                    continue;
+                }
+                var type = value.GetType();
+                if (type.IsEnum)
+                {
+                    value = (int)value;
+                }
+                else if (type == typeof(DateTime))
+                {
+                    value = Convert.ToDateTime(value).Year == 1 ? "1900-01-01" : Convert.ToDateTime(value).ToString("yyyy-MM-dd HH:mm:ss.fff");
+                }
+                if (IsNumericType(column.PropertyInfo.PropertyType))
+                {
+                    values.Add(value.ToString());
+                }
+                else
+                {
+                    values.Add("N'" + value.ToString() + "'");
+                }
+            }
+            return values;
+        }
+
+        private int BulkInsert<T>(IList<T> collection, Func<string, T, string> sqlRebuild)
+        {
+            try
+            {
+                int returnValue = 0;
+                int rowIndex = 0;
+                int rowCount = collection.Count();
+                using (var scope = GetTransaction())
+                {
+                    while (rowIndex < rowCount)
+                    {
+                        returnValue += BulkInsertProcess<T>(collection.Skip(rowIndex).Take(1000).ToList(), sqlRebuild);
+                        rowIndex += 1000;
+                    }
+                    scope.Complete();
+                }
+                return returnValue;
+            }
+            catch (Exception x)
+            {
+                OnException(x);
+                throw;
+            }
+        }
+
+        public int Insert<T>(IList<T> collection, Func<string, T, string> sqlRebuild = null)
+        {
+            return BulkInsert(collection, sqlRebuild);
         }
 
         public int CommandTimeout { get; set; }
@@ -693,6 +863,7 @@ namespace HA.Core
             public string ColumnName;
             public PropertyInfo PropertyInfo;
             public bool ResultColumn;
+            public bool ChildColumn;
             public virtual void SetValue(object target, object val) { PropertyInfo.SetValue(target, val, null); }
             public virtual object GetValue(object target) { return PropertyInfo.GetValue(target, null); }
             public virtual object ChangeType(object val) { return Convert.ChangeType(val, PropertyInfo.PropertyType); }
@@ -789,6 +960,9 @@ namespace HA.Core
                 TableInfo.PrimaryKey = primaryKeyAttr == null ? "ID" : primaryKeyAttr.Value;
                 TableInfo.AutoIncrement = primaryKeyAttr == null ? false : primaryKeyAttr.AutoIncrement;
 
+                var foreighKeyAttr = t.GetCustomAttributes<ForeighKeyAttribute>(true).FirstOrDefault();
+                TableInfo.Foreignkey = foreighKeyAttr == null ? "" : foreighKeyAttr.Value;
+
                 Columns = new Dictionary<string, PocoColumn>(StringComparer.OrdinalIgnoreCase);
                 foreach (var pi in t.GetProperties())
                 {
@@ -801,9 +975,11 @@ namespace HA.Core
                     pc.PropertyInfo = pi;
 
                     // Work out the DB column name
-                    pc.ColumnName = colAttr.Name;
+                    pc.ColumnName = string.IsNullOrWhiteSpace(colAttr.Name) ? pi.Name : colAttr.Name;
                     if ((colAttr as ResultColumnAttribute) != null)
                         pc.ResultColumn = true;
+                    if ((colAttr as ChildColumnAttribute) != null)
+                        pc.ChildColumn = true;
 
                     // Store it
                     Columns.Add(pc.ColumnName, pc);
