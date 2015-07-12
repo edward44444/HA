@@ -6,11 +6,11 @@ using HA.Core;
 
 namespace HA.Persistence
 {
-    public class BasePersistence
+    public abstract class BasePersistence
     {
         public Database Database { get; private set; }
 
-        public BasePersistence()
+        protected BasePersistence()
         {
             Database = new Database("HA");
         }

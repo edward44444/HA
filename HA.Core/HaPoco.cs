@@ -5,13 +5,15 @@ using System.Configuration;
 using System.Data;
 using System.Data.Common;
 using System.Data.SqlClient;
+using System.Diagnostics;
+using System.Dynamic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
+using System.Threading;
 
 namespace HA.Core
 {
@@ -116,7 +118,7 @@ namespace HA.Core
         public virtual void OnEndTransaction() { }
         public virtual void OnException(Exception x)
         {
-            System.Diagnostics.Debug.WriteLine(x.ToString());
+            Debug.WriteLine(x.ToString());
             //System.Diagnostics.Debug.WriteLine(LastCommand);
         }
 
@@ -577,18 +579,17 @@ namespace HA.Core
                 sqlSelectRemoved = "peta_inner.* FROM (SELECT " + sqlSelectRemoved + ") peta_inner";
             }
             sqlPage = string.Format("SELECT * FROM (SELECT ROW_NUMBER() OVER ({0}) peta_rn, {1}) peta_paged WHERE peta_rn>@{2} AND peta_rn<=@{3}",
-                                    sqlOrderBy == null ? "ORDER BY (SELECT NULL)" : sqlOrderBy, sqlSelectRemoved, args.Length, args.Length + 1);
+                                    sqlOrderBy ?? "ORDER BY (SELECT NULL)", sqlSelectRemoved, args.Length, args.Length + 1);
             args = args.Concat(new object[] { skip, skip + take }).ToArray();
         }
-
-        // Fetch a page	
+	
         public Page<T> Page<T>(long page, long itemsPerPage, string sql, params object[] args)
         {
             string sqlCount, sqlPage;
             BuildPageQueries<T>((page - 1) * itemsPerPage, itemsPerPage, sql, ref args, out sqlCount, out sqlPage);
 
             // Save the one-time command time out and use it for both queries
-            int saveTimeout = OneTimeCommandTimeout;
+            var saveTimeout = OneTimeCommandTimeout;
 
             // Setup the paged result
             var result = new Page<T>
@@ -613,17 +614,6 @@ namespace HA.Core
         public Page<T> Page<T>(long page, long itemsPerPage, Sql sql)
         {
             return Page<T>(page, itemsPerPage, sql.SQL, sql.Arguments);
-        }
-
-
-        public List<T> Fetch<T>(long page, long itemsPerPage, string sql, params object[] args)
-        {
-            return SkipTake<T>((page - 1) * itemsPerPage, itemsPerPage, sql, args);
-        }
-
-        public List<T> Fetch<T>(long page, long itemsPerPage, Sql sql)
-        {
-            return SkipTake<T>((page - 1) * itemsPerPage, itemsPerPage, sql.SQL, sql.Arguments);
         }
 
         public List<T> SkipTake<T>(long skip, long take, string sql, params object[] args)
@@ -1268,7 +1258,7 @@ END CATCH
             public static PocoData ForObject(object o, string primaryKeyName)
             {
                 var t = o.GetType();
-                if (t == typeof(System.Dynamic.ExpandoObject))
+                if (t == typeof(ExpandoObject))
                 {
                     var pd = new PocoData();
                     pd.TableInfo = new TableInfo();
@@ -1288,7 +1278,7 @@ END CATCH
                     return ForType(t);
                 }
             }
-            static System.Threading.ReaderWriterLockSlim RWLock = new System.Threading.ReaderWriterLockSlim();
+            static ReaderWriterLockSlim RWLock = new ReaderWriterLockSlim();
             public static PocoData ForType(Type t)
             {
                 // Check cache
@@ -1408,7 +1398,7 @@ END CATCH
                     if (type == typeof(object))
                     {
                         // var poco=new T()
-                        il.Emit(OpCodes.Newobj, typeof(System.Dynamic.ExpandoObject).GetConstructor(Type.EmptyTypes));			// obj
+                        il.Emit(OpCodes.Newobj, typeof(ExpandoObject).GetConstructor(Type.EmptyTypes));			// obj
 
                         MethodInfo fnAdd = typeof(IDictionary<string, object>).GetMethod("Add");
 
@@ -1842,15 +1832,30 @@ END CATCH
 
         public Sql(string alias)
         {
-            this._alias = alias;
+            _alias = alias;
         }
 
-        public Sql<T> Where(Expression expression)
+        public Sql<T> Where(Expression<Func<T, bool>> predicate)
         {
             var alias = string.IsNullOrWhiteSpace(_alias) ? Database.EscapeTableName(Database.PocoData.ForType(typeof(T)).TableInfo.TableName) : _alias;
             var expressionVisitor = new WhereClauseBuilder(alias);
-            expressionVisitor.Visit(expression);
+            expressionVisitor.Visit(predicate);
             return (Sql<T>)Where(expressionVisitor.Sql, expressionVisitor.Arguments);
+        }
+
+        public Sql<T> Select(params Expression<Func<T, object>>[] keySelectors)
+        {
+            throw new NotImplementedException();
+        }
+
+        public Sql<T> OrderBy(params Expression<Func<T, object>>[] keySelectors)
+        {
+            throw new NotImplementedException();
+        }
+
+        public Sql<T> OrderByDescending(params Expression<Func<T, object>>[] keySelectors)
+        {
+            throw new NotImplementedException();
         }
     }
 }

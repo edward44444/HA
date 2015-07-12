@@ -1,14 +1,9 @@
-﻿using HA.Core;
-using HA.Model.Foundation;
-using HA.Persistence;
-using HA.Service.Foundation;
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Data.SqlClient;
-using System.Linq;
 using System.Linq.Expressions;
-using System.Text;
-using System.Threading.Tasks;
+using HA.Model.Foundation;
+using HA.Service.Foundation;
+using System.Linq;
 
 namespace HA.Console
 {
@@ -18,12 +13,16 @@ namespace HA.Console
         {
             //Insert();
 
-            Update();
+            //Update();
+
+            Page();
         }
 
-        static Expression<Func<T, object>>[] GetP<T>(params Expression<Func<T, object>>[] expressions)
+        private static void Page()
         {
-            return expressions;
+            var service = new BaseDataService();
+            var list = service.Fetch<BaseDataDataModel>(t => t.RowStatus == 0 && t.Id > 10);
+            var page = service.Page<BaseDataDataModel>(2, 15, t => t.RowStatus == 0 && t.Id > 10);
         }
 
         private static void Update()
@@ -38,15 +37,19 @@ namespace HA.Console
         private static void Insert()
         {
             var service = new BaseDataService();
-            var list = new List<BaseDataDataModel>();
-            list.Add(new BaseDataDataModel { GroupCode = "X", Code = "1", Name = "edward4", CreatedBy = "edward" });
-            list.Add(new BaseDataDataModel { GroupCode = "X", Code = "1", Name = "edward5", CreatedBy = "edward" });
+            var list = new List<BaseDataDataModel>
+            {
+                new BaseDataDataModel {GroupCode = "X", Code = "1", Name = "edward4", CreatedBy = "edward"},
+                new BaseDataDataModel {GroupCode = "X", Code = "1", Name = "edward5", CreatedBy = "edward"}
+            };
             var list2 = new List<BaseDataDataModel>();
             //list2.Add(new BaseDataDataModel { GroupCode = "Y", Code = "1", Name = "edward4", CreatedBy = "edward" });
             //list2.Add(new BaseDataDataModel { GroupCode = "Y", Code = "1", Name = "edward5", CreatedBy = "edward" });
-            var listGroup = new List<BaseDataGroupDataModel>();
-            listGroup.Add(new BaseDataGroupDataModel { Code = "A", BaseDataList = list });
-            listGroup.Add(new BaseDataGroupDataModel { Code = "B", BaseDataList = list2 });
+            var listGroup = new List<BaseDataGroupDataModel>
+            {
+                new BaseDataGroupDataModel {Code = "A",CreatedOn=DateTime.Now, BaseDataList = list},
+                new BaseDataGroupDataModel {Code = "B", BaseDataList = list2}
+            };
             service.Insert(listGroup);
         }
     }

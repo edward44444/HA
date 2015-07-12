@@ -1,17 +1,18 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
+using HA.Core;
 using HA.Persistence;
 
 namespace HA.Service
 {
-    public class BaseService<T> where T : BasePersistence
+    public abstract class BaseService<TPersistence> where TPersistence : BasePersistence
     {
-        public T Persistence { get; private set; }
+        public TPersistence Persistence { get; private set; }
 
-        public BaseService()
+        protected BaseService()
         {
-            Persistence = Activator.CreateInstance<T>();
+            Persistence = Activator.CreateInstance<TPersistence>();
         }
 
         public List<T> Fetch<T>(Expression<Func<T, bool>> predicate)
@@ -22,6 +23,11 @@ namespace HA.Service
         public T FirstOrDefault<T>(Expression<Func<T, bool>> predicate)
         {
             return Persistence.FirstOrDefault(predicate);
+        }
+
+        public Page<T> Page<T>(long page, long itemsPerPage, Expression<Func<T, bool>> predicate)
+        {
+            return Persistence.Page(page, itemsPerPage, predicate);
         }
 
         public T Insert<T>(T model)
