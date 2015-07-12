@@ -15,19 +15,14 @@ namespace HA.Service
             Persistence = Activator.CreateInstance<TPersistence>();
         }
 
-        public List<T> Fetch<T>(Expression<Func<T, bool>> predicate)
+        public List<T> Fetch<T>(Sql<T> sql)
         {
-            return Persistence.Fetch<T>(predicate);
+            return Persistence.Fetch(sql);
         }
 
-        public T FirstOrDefault<T>(Expression<Func<T, bool>> predicate)
+        public Page<T> Page<T>(long page, long itemsPerPage, Sql<T> sql)
         {
-            return Persistence.FirstOrDefault(predicate);
-        }
-
-        public Page<T> Page<T>(long page, long itemsPerPage, Expression<Func<T, bool>> predicate)
-        {
-            return Persistence.Page(page, itemsPerPage, predicate);
+            return Persistence.Page(page, itemsPerPage, sql);
         }
 
         public T Insert<T>(T model)

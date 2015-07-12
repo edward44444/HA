@@ -15,27 +15,13 @@ namespace HA.Persistence
             Database = new Database("HA");
         }
 
-        private IEnumerable<T> Query<T>(Expression<Func<T, bool>> predicate)
+        public List<T> Fetch<T>(Sql<T> sql)
         {
-            var sql = new Sql<T>();
-            sql.Where(predicate);
-            return Database.Query<T>(sql);
+            return Database.Query<T>(sql).ToList();
         }
 
-        public List<T> Fetch<T>(Expression<Func<T, bool>> predicate)
+        public Page<T> Page<T>(long page, long itemsPerPage, Sql<T> sql)
         {
-            return Query(predicate).ToList();
-        }
-
-        public T FirstOrDefault<T>(Expression<Func<T, bool>> predicate)
-        {
-            return Query(predicate).FirstOrDefault();
-        }
-
-        public Page<T> Page<T>(long page, long itemsPerPage, Expression<Func<T, bool>> predicate)
-        {
-            var sql = new Sql<T>();
-            sql.Where(predicate);
             return Database.Page<T>(page, itemsPerPage, sql);
         }
 

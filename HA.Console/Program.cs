@@ -4,6 +4,7 @@ using System.Linq.Expressions;
 using HA.Model.Foundation;
 using HA.Service.Foundation;
 using System.Linq;
+using HA.Core;
 
 namespace HA.Console
 {
@@ -21,14 +22,14 @@ namespace HA.Console
         private static void Page()
         {
             var service = new BaseDataService();
-            var list = service.Fetch<BaseDataDataModel>(t => t.RowStatus == 0 && t.Id > 10);
-            var page = service.Page<BaseDataDataModel>(2, 15, t => t.RowStatus == 0 && t.Id > 10);
+            var list = service.Fetch(new Sql<BaseDataDataModel>("T").Select(t=>t.Name).From().Where(t => t.RowStatus == 0 && t.Id > 10).OrderBy(t=>t.CreatedOn,t=>t.RowStatus).OrderByDescending(t=>t.Name));
+            var page = service.Page(2, 15, new Sql<BaseDataDataModel>().Where(t => t.RowStatus == 0 && t.Id > 10));
         }
 
         private static void Update()
         {
             var service = new BaseDataService();
-            var list = service.Fetch<BaseDataDataModel>(t=>t.RowStatus==0);
+            var list = service.Fetch(new Sql<BaseDataDataModel>().Where(t => t.RowStatus == 0));
             service.Update(list[0]);
             service.Update(list[0], t => t.RowStatus);
             service.Update(new Expression<Func<BaseDataDataModel, object>>[]{t => t.Name, t => t.GroupCode}, list, t => t.RowStatus, t => t.Code);

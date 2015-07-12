@@ -1777,29 +1777,34 @@ END CATCH
             return Append(new Sql("WHERE (" + sql + ")", args));
         }
 
-        public Sql OrderBy(params object[] columns)
+        public Sql OrderBy(params string[] columns)
         {
-            return Append(new Sql("ORDER BY " + String.Join(", ", (from x in columns select x.ToString()).ToArray())));
+            return Append(new Sql("ORDER BY " + string.Join(", ", columns.Select(c => c + " ASC "))));
         }
 
-        public Sql Select(params object[] columns)
+        public Sql OrderByDescending(params string[] columns)
         {
-            return Append(new Sql("SELECT " + string.Join(", ", (from x in columns select x.ToString()).ToArray())));
+            return Append(new Sql("ORDER BY " + string.Join(", ", columns.Select(c => c + " DESC "))));
         }
 
-        public Sql From(params object[] tables)
+        public Sql Select(params string[] columns)
         {
-            return Append(new Sql("FROM " + String.Join(", ", (from x in tables select x.ToString()).ToArray())));
+            return Append(new Sql("SELECT " + string.Join(", ", columns)));
         }
 
-        public Sql GroupBy(params object[] columns)
+        public Sql From(params string[] tables)
         {
-            return Append(new Sql("GROUP BY " + String.Join(", ", (from x in columns select x.ToString()).ToArray())));
+            return Append(new Sql("FROM " + string.Join(", ", tables)));
         }
 
-        private SqlJoinClause Join(string JoinType, string table)
+        public Sql GroupBy(params string[] columns)
         {
-            return new SqlJoinClause(Append(new Sql(JoinType + table)));
+            return Append(new Sql("GROUP BY " + string.Join(", ", columns)));
+        }
+
+        private SqlJoinClause Join(string joinType, string table)
+        {
+            return new SqlJoinClause(Append(new Sql(joinType + table)));
         }
 
         public SqlJoinClause InnerJoin(string table) { return Join("INNER JOIN ", table); }
@@ -1845,17 +1850,26 @@ END CATCH
 
         public Sql<T> Select(params Expression<Func<T, object>>[] keySelectors)
         {
-            throw new NotImplementedException();
+            var alias = string.IsNullOrWhiteSpace(_alias) ? Database.EscapeTableName(Database.PocoData.ForType(typeof(T)).TableInfo.TableName) : _alias;
+            return (Sql<T>)Select(keySelectors.Select(t => alias + "." + Database.EscapeSqlIdentifier(Database.GetColumnName(t))).ToArray());
+        }
+
+        public Sql<T> From()
+        {
+            return (Sql<T>)Append(new Sql("FROM " + Database.EscapeTableName(Database.PocoData.ForType(typeof(T)).TableInfo.TableName) + " " + (_alias??string.Empty) + " WITH(NOLOCK)"));
         }
 
         public Sql<T> OrderBy(params Expression<Func<T, object>>[] keySelectors)
         {
-            throw new NotImplementedException();
+            var alias = string.IsNullOrWhiteSpace(_alias) ? Database.EscapeTableName(Database.PocoData.ForType(typeof(T)).TableInfo.TableName) : _alias;
+            return (Sql<T>)OrderBy(keySelectors.Select(t => alias + "." + Database.EscapeSqlIdentifier(Database.GetColumnName(t))).ToArray());
         }
 
         public Sql<T> OrderByDescending(params Expression<Func<T, object>>[] keySelectors)
         {
-            throw new NotImplementedException();
+            var alias = string.IsNullOrWhiteSpace(_alias) ? Database.EscapeTableName(Database.PocoData.ForType(typeof(T)).TableInfo.TableName) : _alias;
+            return (Sql<T>)OrderByDescending(keySelectors.Select(t => alias + "." + Database.EscapeSqlIdentifier(Database.GetColumnName(t))).ToArray());
         }
+
     }
 }
