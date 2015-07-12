@@ -1,10 +1,6 @@
-﻿using HA.Core;
-using System;
-using System.Collections.Generic;
+﻿using System;
 using System.ComponentModel;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using HA.Core;
 
 namespace HA.Model.Foundation
 {

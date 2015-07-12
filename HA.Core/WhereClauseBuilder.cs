@@ -158,13 +158,13 @@ namespace HA.Core
             switch (MethodName)
             {
                 case "StartsWith":
-                    _args.Add(node.Value.ToString() + "%");
+                    _args.Add(node.Value + "%");
                     break;
                 case "EndsWith":
-                    _args.Add("%" + node.Value.ToString());
+                    _args.Add("%" + node.Value);
                     break;
                 case "Contains":
-                    _args.Add("%" + node.Value.ToString() + "%");
+                    _args.Add("%" + node.Value + "%");
                     break;
                 default:
                     _args.Add(node.Value);

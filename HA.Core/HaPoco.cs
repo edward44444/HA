@@ -223,9 +223,9 @@ namespace HA.Core
 
         // Helper to handle named parameters from object properties
         static Regex rxParams = new Regex(@"(?<!@)@\w+", RegexOptions.Compiled);
-        public static string ProcessParams(string _sql, object[] args_src, List<object> args_dest)
+        public static string ProcessParams(string sql, object[] args_src, List<object> args_dest)
         {
-            return rxParams.Replace(_sql, m =>
+            return rxParams.Replace(sql, m =>
             {
                 string param = m.Value.Substring(1);
                 object arg_val;
@@ -236,7 +236,7 @@ namespace HA.Core
                 }
                 // Numbered parameter
                 if (paramIndex < 0 || paramIndex >= args_src.Length)
-                    throw new ArgumentOutOfRangeException(string.Format("Parameter '@{0}' specified but only {1} parameters supplied (in `{2}`)", paramIndex, args_src.Length, _sql));
+                    throw new ArgumentOutOfRangeException(string.Format("Parameter '@{0}' specified but only {1} parameters supplied (in `{2}`)", paramIndex, args_src.Length, sql));
                 arg_val = args_src[paramIndex];
                 // Expand collections to parameter lists
                 if (arg_val is IEnumerable && !(arg_val is string) && !(arg_val is byte[]))
@@ -447,7 +447,7 @@ namespace HA.Core
                 var tableName = EscapeTableName(pd.TableInfo.TableName);
                 string cols = string.Join(", ", (from c in pd.QueryColumns select tableName + "." + EscapeSqlIdentifier(c)).ToArray());
                 if (!rxFrom.IsMatch(sql))
-                    sql = string.Format("SELECT {0} FROM {1} {2}", cols, tableName, sql);
+                    sql = string.Format("SELECT {0} FROM {1} WITH(NOLOCK) {2}", cols, tableName, sql);
                 else
                     sql = string.Format("SELECT {0} {1}", cols, sql);
             }

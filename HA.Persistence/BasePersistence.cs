@@ -1,11 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Reflection;
-using HA.Core;
 using System.Linq.Expressions;
+using HA.Core;
 
 namespace HA.Persistence
 {
@@ -35,6 +32,13 @@ namespace HA.Persistence
             return Query(predicate).FirstOrDefault();
         }
 
+        public Page<T> Page<T>(long page, long itemsPerPage, Expression<Func<T, bool>> predicate)
+        {
+            var sql = new Sql<T>();
+            sql.Where(predicate);
+            return Database.Page<T>(page, itemsPerPage, sql);
+        }
+
         public T Insert<T>(T model)
         {
             return (T)Database.Insert(model);
@@ -47,7 +51,7 @@ namespace HA.Persistence
 
         public int Insert<T>(List<T> collection)
         {
-            return Database.Insert(collection, null);
+            return Database.Insert(collection);
         }
 
         public int Insert<T>(List<T> collection,Func<string, T, string> sqlRebuild)
