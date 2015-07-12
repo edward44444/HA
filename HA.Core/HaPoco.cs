@@ -520,6 +520,124 @@ namespace HA.Core
             return Fetch<T>(sql.SQL, sql.Arguments);
         }
 
+        static Regex rxColumns = new Regex(@"\A\s*SELECT\s+((?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|.)*?)(?<!,\s+)\bFROM\b", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
+        static Regex rxOrderBy = new Regex(@"\bORDER\s+BY\s+(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\.])+(?:\s+(?:ASC|DESC))?(?:\s*,\s*(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\.])+(?:\s+(?:ASC|DESC))?)*", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
+        static Regex rxDistinct = new Regex(@"\ADISTINCT\s", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
+
+        public static bool SplitSqlForPaging(string sql, out string sqlCount, out string sqlSelectRemoved, out string sqlOrderBy)
+        {
+            sqlSelectRemoved = null;
+            sqlCount = null;
+            sqlOrderBy = null;
+
+            // Extract the columns from "SELECT <whatever> FROM"
+            var m = rxColumns.Match(sql);
+            if (!m.Success)
+                return false;
+
+            // Save column list and replace with COUNT(*)
+            Group g = m.Groups[1];
+            sqlSelectRemoved = sql.Substring(g.Index);
+
+            if (rxDistinct.IsMatch(sqlSelectRemoved))
+                sqlCount = sql.Substring(0, g.Index) + "COUNT(" + m.Groups[1].ToString().Trim() + ") " + sql.Substring(g.Index + g.Length);
+            else
+                sqlCount = sql.Substring(0, g.Index) + "COUNT(*) " + sql.Substring(g.Index + g.Length);
+
+
+            // Look for an "ORDER BY <whatever>" clause
+            m = rxOrderBy.Match(sqlCount);
+            if (!m.Success)
+            {
+                sqlOrderBy = null;
+            }
+            else
+            {
+                g = m.Groups[0];
+                sqlOrderBy = g.ToString();
+                sqlCount = sqlCount.Substring(0, g.Index) + sqlCount.Substring(g.Index + g.Length);
+            }
+
+            return true;
+        }
+
+        public void BuildPageQueries<T>(long skip, long take, string sql, ref object[] args, out string sqlCount, out string sqlPage)
+        {
+            // Add auto select clause
+            sql = AddSelectClause<T>(sql);
+
+            // Split the SQL into the bits we need
+            string sqlSelectRemoved, sqlOrderBy;
+            if (!SplitSqlForPaging(sql, out sqlCount, out sqlSelectRemoved, out sqlOrderBy))
+                throw new Exception("Unable to parse SQL statement for paged query");
+
+            sqlSelectRemoved = rxOrderBy.Replace(sqlSelectRemoved, "");
+            if (rxDistinct.IsMatch(sqlSelectRemoved))
+            {
+                sqlSelectRemoved = "peta_inner.* FROM (SELECT " + sqlSelectRemoved + ") peta_inner";
+            }
+            sqlPage = string.Format("SELECT * FROM (SELECT ROW_NUMBER() OVER ({0}) peta_rn, {1}) peta_paged WHERE peta_rn>@{2} AND peta_rn<=@{3}",
+                                    sqlOrderBy == null ? "ORDER BY (SELECT NULL)" : sqlOrderBy, sqlSelectRemoved, args.Length, args.Length + 1);
+            args = args.Concat(new object[] { skip, skip + take }).ToArray();
+        }
+
+        // Fetch a page	
+        public Page<T> Page<T>(long page, long itemsPerPage, string sql, params object[] args)
+        {
+            string sqlCount, sqlPage;
+            BuildPageQueries<T>((page - 1) * itemsPerPage, itemsPerPage, sql, ref args, out sqlCount, out sqlPage);
+
+            // Save the one-time command time out and use it for both queries
+            int saveTimeout = OneTimeCommandTimeout;
+
+            // Setup the paged result
+            var result = new Page<T>
+            {
+                CurrentPage = page,
+                ItemsPerPage = itemsPerPage,
+                TotalItems = ExecuteScalar<long>(sqlCount, args)
+            };
+            result.TotalPages = result.TotalItems / itemsPerPage;
+            if ((result.TotalItems % itemsPerPage) != 0)
+                result.TotalPages++;
+
+            OneTimeCommandTimeout = saveTimeout;
+
+            // Get the records
+            result.Items = Fetch<T>(sqlPage, args);
+
+            // Done
+            return result;
+        }
+
+        public Page<T> Page<T>(long page, long itemsPerPage, Sql sql)
+        {
+            return Page<T>(page, itemsPerPage, sql.SQL, sql.Arguments);
+        }
+
+
+        public List<T> Fetch<T>(long page, long itemsPerPage, string sql, params object[] args)
+        {
+            return SkipTake<T>((page - 1) * itemsPerPage, itemsPerPage, sql, args);
+        }
+
+        public List<T> Fetch<T>(long page, long itemsPerPage, Sql sql)
+        {
+            return SkipTake<T>((page - 1) * itemsPerPage, itemsPerPage, sql.SQL, sql.Arguments);
+        }
+
+        public List<T> SkipTake<T>(long skip, long take, string sql, params object[] args)
+        {
+            string sqlCount, sqlPage;
+            BuildPageQueries<T>(skip, take, sql, ref args, out sqlCount, out sqlPage);
+            return Fetch<T>(sqlPage, args);
+        }
+
+        public List<T> SkipTake<T>(long skip, long take, Sql sql)
+        {
+            return SkipTake<T>(skip, take, sql.SQL, sql.Arguments);
+        }
+
         private object Insert(string tableName, string primaryKeyName, bool autoIncrement, object poco)
         {
             try
@@ -1735,97 +1853,4 @@ END CATCH
             return (Sql<T>)Where(expressionVisitor.Sql, expressionVisitor.Arguments);
         }
     }
-
-    //public class Sql<T> : Sql
-    //{
-    //    string _alias;
-
-    //    static Dictionary<ExpressionType, string> operators;
-
-    //    static Sql()
-    //    {
-    //        operators = new Dictionary<ExpressionType, string>();
-    //        operators.Add(ExpressionType.Equal, "=");
-    //        operators.Add(ExpressionType.GreaterThan, ">");
-    //        operators.Add(ExpressionType.GreaterThanOrEqual, ">=");
-    //        operators.Add(ExpressionType.LessThan, "<");
-    //        operators.Add(ExpressionType.LessThanOrEqual, "<=");
-    //        operators.Add(ExpressionType.NotEqual, "<>");
-    //    }
-
-    //    public Sql()
-    //    {
-    //    }
-
-    //    public Sql(string alias)
-    //    {
-    //        this._alias = alias;
-    //    }
-
-    //    public Sql<T> Select()
-    //    {
-    //        var pd = Database.PocoData.ForType(typeof(T));
-    //        var prefix = !string.IsNullOrWhiteSpace(_alias) ? _alias : Database.EscapeTableName(Database.PocoData.ForType(typeof(T)).TableInfo.TableName);
-    //        return (Sql<T>)Append(new Sql("SELECT " + string.Join(", ", pd.QueryColumns.Select(c => prefix + "." + Database.EscapeSqlIdentifier(c)))));
-    //    }
-
-    //    public Sql<T> Where(Expression<Func<T, bool>> expression)
-    //    {
-    //        BinaryExpression operation = (BinaryExpression)expression.Body;
-    //        MemberExpression left = operation.Left as MemberExpression;
-    //        if (left == null)
-    //        {
-    //            left = (operation.Left as UnaryExpression).Operand as MemberExpression;
-    //        }
-    //        if (left == null)
-    //        {
-    //            left = ((operation.Left as UnaryExpression).Operand as UnaryExpression).Operand as MemberExpression;
-    //        }
-    //        object value = null;
-    //        ConstantExpression rightConstant = operation.Right as ConstantExpression;
-    //        if (rightConstant != null)
-    //        {
-    //            value = rightConstant.Value;
-    //        }
-    //        if (value == null)
-    //        {
-    //            MemberExpression rightMember = operation.Right as MemberExpression;
-    //            if (rightMember == null)
-    //            {
-    //                UnaryExpression rightUnary = operation.Right as UnaryExpression;
-    //                if (rightUnary != null)
-    //                {
-    //                    rightMember = (operation.Right as UnaryExpression).Operand as MemberExpression;
-    //                }
-    //            }
-    //            if (rightMember != null)
-    //            {
-    //                var objectMember = Expression.Convert(rightMember, typeof(object));
-    //                var getterLambda = Expression.Lambda<Func<object>>(objectMember);
-    //                var getter = getterLambda.Compile();
-    //                value = getter.Invoke();
-    //            }
-    //        }
-    //        if (value == null)
-    //        {
-    //            MethodCallExpression rightMethodCall = operation.Right as MethodCallExpression;
-    //            if (rightMethodCall != null)
-    //            {
-    //                value = Expression.Lambda(rightMethodCall).Compile().DynamicInvoke();
-    //            }
-    //        }
-    //        var pd = Database.PocoData.ForType(typeof(T));
-    //        string name = pd.Columns.FirstOrDefault(u => u.Value.PropertyInfo.Name == left.Member.Name).Value.ColumnName;
-    //        if (!string.IsNullOrWhiteSpace(_alias))
-    //        {
-    //            name = _alias + "." + EscapeSqlIdentifier(name);
-    //        }
-    //        else
-    //        {
-    //            name = EscapeSqlIdentifier(name);
-    //        }
-    //        string sql = string.Format("{0}{1}@0", name, operators[operation.NodeType]);
-    //        return (Sql<T>)Where(sql, value);
-    //    }
-    //}
 }

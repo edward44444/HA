@@ -27,7 +27,7 @@ namespace HA.Core
         {
             get
             {
-                string methodName = _methodName;
+                var methodName = _methodName;
                 _methodName = null;
                 return methodName;
             }
@@ -125,7 +125,7 @@ namespace HA.Core
             }
         }
 
-        private object GetValue(MemberExpression node)
+        private static object GetValue(MemberExpression node)
         {
             var objectMember = Expression.Convert(node, typeof(object));
             var getterLambda = Expression.Lambda<Func<object>>(objectMember);
@@ -133,7 +133,7 @@ namespace HA.Core
             return getter.Invoke();
         }
 
-        private object GetValue(MethodCallExpression node)
+        private static object GetValue(MethodCallExpression node)
         {
             return Expression.Lambda(node).Compile().DynamicInvoke();
         }
