@@ -708,7 +708,7 @@ namespace HA.Core
             return Insert(pd.TableInfo.TableName, pd.TableInfo.PrimaryKey, pd.TableInfo.AutoIncrement, poco);
         }
 
-        private DataTable CopyToDataTable<T>(IList<T> collection)
+        private static DataTable CopyToDataTable<T>(IList<T> collection)
         {
             var pd = PocoData.ForType(typeof(T));
             var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey).ToList();
@@ -727,7 +727,7 @@ namespace HA.Core
                     {
                         values[i] = string.Empty;
                     }
-                    else if (values[i].GetType() == typeof(DateTime) && Convert.ToDateTime(values[i]).Year == 1)
+                    else if (values[i] is DateTime && Convert.ToDateTime(values[i]).Year == 1)
                     {
                         values[i] = "1900-01-01";
                     }
@@ -812,7 +812,7 @@ END CATCH
                 var values = GetInsertValueStringList(columns, poco);
                 var insertSql = string.Format(@"INSERT {0} ({1}) VALUES ({2});", EscapeTableName(pd.TableInfo.TableName), colsStr, string.Join(",", values));
 
-                var childColumns = pd.Columns.Values.Where(c => c.ChildColumn == true).ToList();
+                var childColumns = pd.Columns.Values.Where(c => c.ChildColumn).ToList();
                 if (childColumns.Count > 0)
                 {
                     var sqlAppend = new StringBuilder();
@@ -828,7 +828,7 @@ END CATCH
                         {
                             continue;
                         }
-                        childItems = childItems == null ? new object[] { value } : childItems;
+                        childItems = childItems ?? new[] { value };
                         BuildChildBulkInsertSql(childItems[0].GetType(), childItems, sqlAppend);
                     }
                     insertSql += sqlAppend.ToString();
@@ -841,7 +841,7 @@ END CATCH
             }
         }
 
-        private void BuildChildBulkInsertSql(Type type,IList collection, StringBuilder sql)
+        private static void BuildChildBulkInsertSql(Type type,IEnumerable collection, StringBuilder sql)
         {
             var pd = PocoData.ForType(type);
             var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey && c.ColumnName != pd.TableInfo.Foreignkey).ToList();
@@ -880,7 +880,7 @@ END CATCH
                 }
                 else
                 {
-                    values.Add("N'" + value.ToString() + "'");
+                    values.Add("N'" + value + "'");
                 }
             }
             return values;
@@ -897,7 +897,7 @@ END CATCH
                 {
                     while (rowIndex < rowCount)
                     {
-                        returnValue += BulkInsertProcess<T>(collection.Skip(rowIndex).Take(1000).ToList(), sqlRebuild);
+                        returnValue += BulkInsertProcess(collection.Skip(rowIndex).Take(1000).ToList(), sqlRebuild);
                         rowIndex += 1000;
                     }
                     scope.Complete();
@@ -920,8 +920,8 @@ END CATCH
                 {
                     var pd = PocoData.ForType(typeof(T));
                     var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey).ToList();
-                    string colsStr = string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
-                    StringBuilder sql = new StringBuilder();
+                    var colsStr = string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
+                    var sql = new StringBuilder();
                     sql.AppendLine("IF(OBJECT_ID('tempdb..#T1') IS NOT NULL) DROP TABLE #T1");
                     sql.AppendFormat("SELECT {0} INTO #T1 FROM {1} WHERE 1=2", colsStr, EscapeTableName(pd.TableInfo.TableName)).AppendLine();
                     foreach (var poco in collection)
@@ -936,7 +936,7 @@ END CATCH
                     }
                     cmd.CommandText = sql.ToString();
                     DoPreExecute(cmd);
-                    int returnValue = cmd.ExecuteNonQuery();
+                    var returnValue = cmd.ExecuteNonQuery();
                     OnExecutedCommand(cmd);
                     return returnValue;
                 }
@@ -947,18 +947,18 @@ END CATCH
             }
         }
 
-        public int Insert<T>(IEnumerable<T> collection, string whereSql)
+        public int Insert<T>(IList<T> collection, string whereSql)
         {
             try
             {
-                int returnValue = 0;
-                int rowIndex = 0;
-                int rowCount = collection.Count();
+                var returnValue = 0;
+                var rowIndex = 0;
+                var rowCount = collection.Count();
                 using (var scope = GetTransaction())
                 {
                     while (rowIndex < rowCount)
                     {
-                        returnValue += BulkInsertProcess<T>(collection.Skip(rowIndex).Take(1000).ToList(), whereSql);
+                        returnValue += BulkInsertProcess(collection.Skip(rowIndex).Take(1000).ToList(), whereSql);
                         rowIndex += 1000;
                     }
                     scope.Complete();
@@ -1035,7 +1035,7 @@ END CATCH
                         }
 
                         cmd.CommandText = string.Format("UPDATE {0} SET {1} WHERE {2} = @{3}",
-                            EscapeTableName(tableName), sb.ToString(), EscapeSqlIdentifier(primaryKeyName), index++);
+                            EscapeTableName(tableName), sb, EscapeSqlIdentifier(primaryKeyName), index);
                         AddParam(cmd, primaryKeyValue);
 
                         DoPreExecute(cmd);
@@ -1127,14 +1127,14 @@ END CATCH
         {
             try
             {
-                int returnValue = 0;
-                int rowIndex = 0;
-                int rowCount = collection.Count();
+                var returnValue = 0;
+                var rowIndex = 0;
+                var rowCount = collection.Count();
                 using (var scope = GetTransaction())
                 {
                     while (rowIndex < rowCount)
                     {
-                        returnValue += BulkUpdateProcess<T>(tableName, primaryKeyNames, collection.Skip(rowIndex).Take(1000).ToList(), columnNames, sqlRebuild);
+                        returnValue += BulkUpdateProcess(tableName, primaryKeyNames, collection.Skip(rowIndex).Take(1000).ToList(), columnNames, sqlRebuild);
                         rowIndex += 1000;
                     }
                     scope.Complete();
@@ -1151,7 +1151,7 @@ END CATCH
         public int Update<T>(IList<T> collection,params Expression<Func<T, object>>[] expressions)
         {
             var pd = PocoData.ForType(typeof(T));
-            return BulkUpdate(pd.TableInfo.TableName, new string[] { pd.TableInfo.PrimaryKey }, collection, (from c in expressions select GetColumnName(c)).ToList(), null);
+            return BulkUpdate(pd.TableInfo.TableName, new[] { pd.TableInfo.PrimaryKey }, collection, (from c in expressions select GetColumnName(c)).ToList(), null);
         }
 
         public int Update<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, params Expression<Func<T, object>>[] expressions)
@@ -1364,10 +1364,10 @@ END CATCH
             }
 
             // Create factory function that can convert a IDataReader record into a POCO
-            public Delegate GetFactory(string sql, string connString, bool ForceDateTimesToUtc, int firstColumn, int countColumns, IDataReader r)
+            public Delegate GetFactory(string sql, string connString, bool forceDateTimesToUtc, int firstColumn, int countColumns, IDataReader r)
             {
                 // Check cache
-                var key = string.Format("{0}:{1}:{2}:{3}:{4}", sql, connString, ForceDateTimesToUtc, firstColumn, countColumns);
+                var key = string.Format("{0}:{1}:{2}:{3}:{4}", sql, connString, forceDateTimesToUtc, firstColumn, countColumns);
                 RWLock.EnterReadLock();
                 try
                 {
@@ -1413,7 +1413,7 @@ END CATCH
                             // Get the converter
                             Func<object, object> converter = null;
 
-                            if (ForceDateTimesToUtc && converter == null && srcType == typeof(DateTime))
+                            if (forceDateTimesToUtc && converter == null && srcType == typeof(DateTime))
                                 converter = delegate(object src) { return new DateTime(((DateTime)src).Ticks, DateTimeKind.Utc); };
 
                             // Setup stack for call to converter
@@ -1453,7 +1453,7 @@ END CATCH
                     {
                         // Do we need to install a converter?
                         var srcType = r.GetFieldType(0);
-                        var converter = GetConverter(ForceDateTimesToUtc, null, srcType, type);
+                        var converter = GetConverter(forceDateTimesToUtc, null, srcType, type);
 
                         // "if (!rdr.IsDBNull(i))"
                         il.Emit(OpCodes.Ldarg_0);										// rdr
@@ -1508,7 +1508,7 @@ END CATCH
                             il.Emit(OpCodes.Dup);											// poco,poco
 
                             // Do we need to install a converter?
-                            var converter = GetConverter(ForceDateTimesToUtc, pc, srcType, dstType);
+                            var converter = GetConverter(forceDateTimesToUtc, pc, srcType, dstType);
 
                             // Fast
                             bool Handled = false;
