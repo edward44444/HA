@@ -227,10 +227,10 @@ namespace HA.Core
         static Regex rxParams = new Regex(@"(?<!@)@\w+", RegexOptions.Compiled);
         public static string ProcessParams(string sql, object[] args_src, List<object> args_dest)
         {
+            object arg_val;
             return rxParams.Replace(sql, m =>
             {
-                string param = m.Value.Substring(1);
-                object arg_val;
+                var param = m.Value.Substring(1);
                 int paramIndex;
                 if (!int.TryParse(param, out paramIndex))
                 {
@@ -407,8 +407,8 @@ namespace HA.Core
             return ExecuteScalar<T>(sql.SQL, sql.Arguments);
         }
 
-        Regex rxSelect = new Regex(@"\A\s*(SELECT|EXECUTE|CALL)\s", RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Multiline);
-        Regex rxFrom = new Regex(@"\A\s*FROM\s", RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Multiline);
+        static Regex rxSelect = new Regex(@"\A\s*(SELECT|EXECUTE|CALL)\s", RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Multiline);
+        static Regex rxFrom = new Regex(@"\A\s*FROM\s", RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Multiline);
 
         public static string EscapeTableName(string str)
         {
