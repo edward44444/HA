@@ -846,11 +846,7 @@ END CATCH
             var pd = PocoData.ForType(type);
             var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey && c.ColumnName != pd.TableInfo.Foreignkey).ToList();
             var colsStr = EscapeSqlIdentifier(pd.TableInfo.Foreignkey) + "," + string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
-            var values = new List<string>();
-            foreach (var poco in collection)
-            {
-                values.Add("(SCOPE_IDENTITY()," + string.Join(",", GetInsertValueStringList(columns, poco)) + ")");
-            }
+            var values = (from object poco in collection select "(SCOPE_IDENTITY()," + string.Join(",", GetInsertValueStringList(columns, poco)) + ")").ToList();
             sql.AppendFormat("INSERT {0} ({1}) VALUES {2}", EscapeTableName(pd.TableInfo.TableName), colsStr, string.Join(",", values));
         }
 
@@ -986,7 +982,7 @@ END CATCH
                             foreach (var i in pd.Columns)
                             {
                                 // Don't update the primary key, but grab the value if we don't have it
-                                if (string.Compare(i.Key, primaryKeyName, true) == 0)
+                                if (string.Compare(i.Key, primaryKeyName, StringComparison.OrdinalIgnoreCase) == 0)
                                 {
                                     if (primaryKeyValue == null)
                                         primaryKeyValue = i.Value.GetValue(poco);
@@ -1074,23 +1070,13 @@ END CATCH
                     var pd = PocoData.ForType(typeof(T));
                     var columns = pd.Columns.Values.Where(c => columnNames.Contains(c.ColumnName)).ToList();
                     var primaryKeyColumns = pd.Columns.Values.Where(c => primaryKeyNames.Contains(c.ColumnName)).ToList();
-                    StringBuilder sql = new StringBuilder();
+                    var sql = new StringBuilder();
                     sql.AppendLine("BEGIN TRY");
                     foreach (var poco in collection)
                     {
-                        var setSqls = new List<string>();
-                        var whereSqls = new List<string>();
-                        var values = GetInsertValueStringList(columns, poco);
-                        for (var i = 0; i < columns.Count; i++)
-                        {
-                            setSqls.Add(string.Format("{0}={1}", EscapeSqlIdentifier(columns[i].ColumnName), values[i]));
-                        }
-                        var primaryKeyValues = GetInsertValueStringList(primaryKeyColumns, poco);
-                        for (var i = 0; i < primaryKeyColumns.Count; i++)
-                        {
-                            whereSqls.Add(string.Format("{0}={1}", EscapeSqlIdentifier(primaryKeyColumns[i].ColumnName), primaryKeyValues[i]));
-                        }
-                        string updateSql = string.Format(@"UPDATE {0} SET {1} WHERE {2};", EscapeSqlIdentifier(tableName), string.Join(",", setSqls), string.Join(" AND ", whereSqls));
+                        var setSqls = columns.Select(t => string.Format("{0}={1}", EscapeSqlIdentifier(t.ColumnName), GetInsertValueString(t, poco))).ToList();
+                        var whereSqls = primaryKeyColumns.Select(t => string.Format("{0}={1}", EscapeSqlIdentifier(t.ColumnName), GetInsertValueString(t, poco))).ToList();
+                        var updateSql = string.Format(@"UPDATE {0} SET {1} WHERE {2};", EscapeSqlIdentifier(tableName), string.Join(",", setSqls), string.Join(" AND ", whereSqls));
                         if (sqlRebuild != null)
                         {
                             updateSql = sqlRebuild(updateSql, poco);
