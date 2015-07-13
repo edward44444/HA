@@ -260,7 +260,7 @@ namespace HA.Core
         }
 
         // Add a parameter to a DB command
-        void AddParam(IDbCommand cmd, object item)
+        static void AddParam(IDbCommand cmd, object item)
         {
             var p = cmd.CreateParameter();
             p.ParameterName = string.Format("@{0}", cmd.Parameters.Count);
@@ -385,7 +385,7 @@ namespace HA.Core
                 {
                     using (var cmd = CreateCommand(_sharedConnection, sql, args))
                     {
-                        object val = cmd.ExecuteScalar();
+                        var val = cmd.ExecuteScalar();
                         OnExecutedCommand(cmd);
                         return (T)Convert.ChangeType(val, typeof(T));
                     }
@@ -438,7 +438,7 @@ namespace HA.Core
             return pd.Columns.FirstOrDefault(u => u.Value.PropertyInfo.Name == memberExpression.Member.Name).Value.ColumnName;
         }
 
-        string AddSelectClause<T>(string sql)
+        static string AddSelectClause<T>(string sql)
         {
             if (sql.StartsWith(";"))
                 return sql.Substring(1);
@@ -447,7 +447,7 @@ namespace HA.Core
             {
                 var pd = PocoData.ForType(typeof(T));
                 var tableName = EscapeTableName(pd.TableInfo.TableName);
-                string cols = string.Join(", ", (from c in pd.QueryColumns select tableName + "." + EscapeSqlIdentifier(c)).ToArray());
+                var cols = string.Join(", ", (from c in pd.QueryColumns select tableName + "." + EscapeSqlIdentifier(c)).ToArray());
                 if (!rxFrom.IsMatch(sql))
                     sql = string.Format("SELECT {0} FROM {1} WITH(NOLOCK) {2}", cols, tableName, sql);
                 else
@@ -674,7 +674,7 @@ namespace HA.Core
 
                         cmd.CommandText += ";\nSELECT SCOPE_IDENTITY() AS NewID;";
                         DoPreExecute(cmd);
-                        object id = cmd.ExecuteScalar();
+                        var id = cmd.ExecuteScalar();
                         OnExecutedCommand(cmd);
 
                         // Assign the ID back to the primary key property
@@ -712,15 +712,15 @@ namespace HA.Core
         {
             var pd = PocoData.ForType(typeof(T));
             var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey).ToList();
-            DataTable dt = new DataTable();
+            var dt = new DataTable();
             foreach (var column in columns)
             {
                 dt.Columns.Add(column.PropertyInfo.Name);
             }
             foreach (var poco in collection)
             {
-                object[] values = new object[columns.Count];
-                for (int i = 0; i < columns.Count; i++)
+                var values = new object[columns.Count];
+                for (var i = 0; i < columns.Count; i++)
                 {
                     values[i] = columns[i].GetValue(poco);
                     if (values[i] == null)
@@ -747,7 +747,7 @@ namespace HA.Core
                 OpenSharedConnection();
                 try
                 {
-                    using (SqlBulkCopy bulkCopy = new SqlBulkCopy((SqlConnection)_sharedConnection, SqlBulkCopyOptions.Default, (SqlTransaction)_transaction))
+                    using (var bulkCopy = new SqlBulkCopy((SqlConnection)_sharedConnection, SqlBulkCopyOptions.Default, (SqlTransaction)_transaction))
                     {
                         bulkCopy.DestinationTableName = pd.TableInfo.TableName;
                         foreach (var column in columns)
@@ -791,7 +791,7 @@ END CATCH
 ");
                     cmd.CommandText = sql.ToString();
                     DoPreExecute(cmd);
-                    int returnValue = cmd.ExecuteNonQuery();
+                    var returnValue = cmd.ExecuteNonQuery();
                     OnExecutedCommand(cmd);
                     return returnValue;
                 }
@@ -802,7 +802,7 @@ END CATCH
             }
         }
 
-        private void BuildBulkInsertSql<T>(IList<T> collection, StringBuilder sql, Func<string, T, string> sqlRebuild)
+        private static void BuildBulkInsertSql<T>(IEnumerable<T> collection, StringBuilder sql, Func<string, T, string> sqlRebuild)
         {
             var pd = PocoData.ForType(typeof(T));
             var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey).ToList();
@@ -856,43 +856,39 @@ END CATCH
 
         private static List<string> GetInsertValueStringList(IList<PocoColumn> columns, object poco)
         {
-            var values = new List<string>();
-            for (var i = 0; i < columns.Count; i++)
+            return columns.Select(t => GetInsertValueString(t, poco)).ToList();
+        }
+
+        private static string GetInsertValueString(PocoColumn column, object poco)
+        {
+            var value = column.GetValue(poco);
+            if (value == null)
             {
-                var value = columns[i].GetValue(poco);
-                if (value == null)
-                {
-                    values.Add("''");
-                    continue;
-                }
-                var type = value.GetType();
-                if (type.IsEnum)
-                {
-                    value = (int)value;
-                }
-                else if (type == typeof(DateTime))
-                {
-                    value = Convert.ToDateTime(value).Year == 1 ? "1900-01-01" : Convert.ToDateTime(value).ToString("yyyy-MM-dd HH:mm:ss.fff");
-                }
-                if (IsNumericType(columns[i].PropertyInfo.PropertyType))
-                {
-                    values.Add(value.ToString());
-                }
-                else
-                {
-                    values.Add("N'" + value + "'");
-                }
+                return "''";
             }
-            return values;
+            var type = value.GetType();
+            if (type.IsEnum)
+            {
+                value = (int)value;
+            }
+            else if (type == typeof(DateTime))
+            {
+                value = Convert.ToDateTime(value).Year == 1 ? "1900-01-01" : Convert.ToDateTime(value).ToString("yyyy-MM-dd HH:mm:ss.fff");
+            }
+            if (IsNumericType(column.PropertyInfo.PropertyType))
+            {
+                return value.ToString();
+            }
+            return "N'" + value + "'";
         }
 
         public int Insert<T>(IList<T> collection, Func<string, T, string> sqlRebuild=null)
         {
             try
             {
-                int returnValue = 0;
-                int rowIndex = 0;
-                int rowCount = collection.Count();
+                var returnValue = 0;
+                var rowIndex = 0;
+                var rowCount = collection.Count();
                 using (var scope = GetTransaction())
                 {
                     while (rowIndex < rowCount)
@@ -1112,7 +1108,7 @@ END CATCH
 ");
                     cmd.CommandText = sql.ToString();
                     DoPreExecute(cmd);
-                    int returnValue = cmd.ExecuteNonQuery();
+                    var returnValue = cmd.ExecuteNonQuery();
                     OnExecutedCommand(cmd);
                     return returnValue;
                 }
