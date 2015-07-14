@@ -100,8 +100,8 @@ namespace HA.Core
 
     public class Database : IDisposable
     {
-        string _connectionString;
-        DbProviderFactory _factory;
+        readonly string _connectionString;
+        readonly DbProviderFactory _factory;
         IDbConnection _sharedConnection;
         IDbTransaction _transaction;
         int _sharedConnectionDepth;
@@ -139,6 +139,7 @@ namespace HA.Core
             if (_sharedConnectionDepth == 0)
             {
                 _sharedConnection = _factory.CreateConnection();
+                // ReSharper disable once PossibleNullReferenceException
                 _sharedConnection.ConnectionString = _connectionString;
                 _sharedConnection.Open();
 
@@ -153,16 +154,14 @@ namespace HA.Core
         // Close a previously opened connection
         public void CloseSharedConnection()
         {
-            if (_sharedConnectionDepth > 0)
-            {
-                _sharedConnectionDepth--;
-                if (_sharedConnectionDepth == 0)
-                {
-                    OnConnectionClosing(_sharedConnection);
-                    _sharedConnection.Dispose();
-                    _sharedConnection = null;
-                }
-            }
+            if (_sharedConnectionDepth <= 0) 
+                return;
+            _sharedConnectionDepth--;
+            if (_sharedConnectionDepth != 0) 
+                return;
+            OnConnectionClosing(_sharedConnection);
+            _sharedConnection.Dispose();
+            _sharedConnection = null;
         }
 
         // Start a new transaction, can be nested, every call must be
@@ -171,13 +170,12 @@ namespace HA.Core
         public void BeginTransaction()
         {
             _transactionDepth++;
-            if (_transactionDepth == 1)
-            {
-                OpenSharedConnection();
-                _transaction = _sharedConnection.BeginTransaction();
-                _transactionCancelled = false;
-                OnBeginTransaction();
-            }
+            if (_transactionDepth != 1) 
+                return;
+            OpenSharedConnection();
+            _transaction = _sharedConnection.BeginTransaction();
+            _transactionCancelled = false;
+            OnBeginTransaction();
         }
 
         // Internal helper to cleanup transaction stuff
@@ -224,10 +222,10 @@ namespace HA.Core
         }
 
         // Helper to handle named parameters from object properties
-        static Regex rxParams = new Regex(@"(?<!@)@\w+", RegexOptions.Compiled);
-        public static string ProcessParams(string sql, object[] args_src, List<object> args_dest)
+        static readonly Regex rxParams = new Regex(@"(?<!@)@\w+", RegexOptions.Compiled);
+        public static string ProcessParams(string sql, object[] argsSrc, List<object> argsDest)
         {
-            object arg_val;
+            object argVal;
             return rxParams.Replace(sql, m =>
             {
                 var param = m.Value.Substring(1);
@@ -237,25 +235,22 @@ namespace HA.Core
                     return m.Value;
                 }
                 // Numbered parameter
-                if (paramIndex < 0 || paramIndex >= args_src.Length)
-                    throw new ArgumentOutOfRangeException(string.Format("Parameter '@{0}' specified but only {1} parameters supplied (in `{2}`)", paramIndex, args_src.Length, sql));
-                arg_val = args_src[paramIndex];
+                if (paramIndex < 0 || paramIndex >= argsSrc.Length)
+                    throw new ArgumentOutOfRangeException(string.Format("Parameter '@{0}' specified but only {1} parameters supplied (in `{2}`)", paramIndex, argsSrc.Length, sql));
+                argVal = argsSrc[paramIndex];
                 // Expand collections to parameter lists
-                if (arg_val is IEnumerable && !(arg_val is string) && !(arg_val is byte[]))
+                if (argVal is IEnumerable && !(argVal is string) && !(argVal is byte[]))
                 {
                     var sb = new StringBuilder();
-                    foreach (var i in arg_val as IEnumerable)
+                    foreach (var i in argVal as IEnumerable)
                     {
-                        sb.Append((sb.Length == 0 ? "@" : ",@") + args_dest.Count.ToString());
-                        args_dest.Add(i);
+                        sb.Append((sb.Length == 0 ? "@" : ",@") + argsDest.Count.ToString());
+                        argsDest.Add(i);
                     }
                     return sb.ToString();
                 }
-                else
-                {
-                    args_dest.Add(arg_val);
-                    return "@" + (args_dest.Count - 1).ToString();
-                }
+                argsDest.Add(argVal);
+                return "@" + (argsDest.Count - 1).ToString();
             });
         }
 
@@ -287,13 +282,16 @@ namespace HA.Core
                 }
                 else if (t == typeof(string))
                 {
+                    // ReSharper disable once PossibleNullReferenceException
                     p.Size = Math.Max((item as string).Length + 1, 4000);		// Help query plan caching by using common size
                     p.Value = item;
                 }
                 else if (t == typeof(AnsiString))
                 {
                     // Thanks @DataChomp for pointing out the SQL Server indexing performance hit of using wrong string type on varchar
+                    // ReSharper disable once PossibleNullReferenceException
                     p.Size = Math.Max((item as AnsiString).Value.Length + 1, 4000);
+                    // ReSharper disable once PossibleNullReferenceException
                     p.Value = (item as AnsiString).Value;
                     p.DbType = DbType.AnsiString;
                 }
@@ -322,13 +320,13 @@ namespace HA.Core
         public IDbCommand CreateCommand(IDbConnection connection, string sql, params object[] args)
         {
             // Perform named argument replacements
-            var new_args = new List<object>();
-            sql = ProcessParams(sql, args, new_args);
-            args = new_args.ToArray();
+            var newArgs = new List<object>();
+            sql = ProcessParams(sql, args, newArgs);
+            args = newArgs.ToArray();
             sql = sql.Replace("@@", "@");  // <- double @@ escapes a single @
 
             // Create the command and add parameters
-            IDbCommand cmd = connection.CreateCommand();
+            var cmd = connection.CreateCommand();
             cmd.CommandText = sql;
             cmd.Transaction = _transaction;
 
@@ -407,8 +405,8 @@ namespace HA.Core
             return ExecuteScalar<T>(sql.SQL, sql.Arguments);
         }
 
-        static Regex rxSelect = new Regex(@"\A\s*(SELECT|EXECUTE|CALL)\s", RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Multiline);
-        static Regex rxFrom = new Regex(@"\A\s*FROM\s", RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Multiline);
+        static readonly Regex rxSelect = new Regex(@"\A\s*(SELECT|EXECUTE|CALL)\s", RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Multiline);
+        static readonly Regex rxFrom = new Regex(@"\A\s*FROM\s", RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Multiline);
 
         public static string EscapeTableName(string str)
         {
@@ -432,9 +430,11 @@ namespace HA.Core
             var memberExpression = columnExpression.Body as MemberExpression;
             if (memberExpression == null)
             {
+                // ReSharper disable once PossibleNullReferenceException
                 memberExpression = (columnExpression.Body as UnaryExpression).Operand as MemberExpression;
             }
             var pd = PocoData.ForType(typeof(T));
+            // ReSharper disable once PossibleNullReferenceException
             return pd.Columns.FirstOrDefault(u => u.Value.PropertyInfo.Name == memberExpression.Member.Name).Value.ColumnName;
         }
 
@@ -488,6 +488,7 @@ namespace HA.Core
                             {
                                 if (!r.Read())
                                     yield break;
+                                // ReSharper disable once PossibleNullReferenceException
                                 poco = factory(r);
                             }
                             catch (Exception x)
@@ -522,9 +523,9 @@ namespace HA.Core
             return Fetch<T>(sql.SQL, sql.Arguments);
         }
 
-        static Regex rxColumns = new Regex(@"\A\s*SELECT\s+((?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|.)*?)(?<!,\s+)\bFROM\b", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
-        static Regex rxOrderBy = new Regex(@"\bORDER\s+BY\s+(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\.])+(?:\s+(?:ASC|DESC))?(?:\s*,\s*(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\.])+(?:\s+(?:ASC|DESC))?)*", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
-        static Regex rxDistinct = new Regex(@"\ADISTINCT\s", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
+        static readonly Regex rxColumns = new Regex(@"\A\s*SELECT\s+((?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|.)*?)(?<!,\s+)\bFROM\b", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
+        static readonly Regex rxOrderBy = new Regex(@"\bORDER\s+BY\s+(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\.])+(?:\s+(?:ASC|DESC))?(?:\s*,\s*(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\.])+(?:\s+(?:ASC|DESC))?)*", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
+        static readonly Regex rxDistinct = new Regex(@"\ADISTINCT\s", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
 
         public static bool SplitSqlForPaging(string sql, out string sqlCount, out string sqlSelectRemoved, out string sqlOrderBy)
         {
@@ -538,7 +539,7 @@ namespace HA.Core
                 return false;
 
             // Save column list and replace with COUNT(*)
-            Group g = m.Groups[1];
+            var g = m.Groups[1];
             sqlSelectRemoved = sql.Substring(g.Index);
 
             if (rxDistinct.IsMatch(sqlSelectRemoved))
@@ -549,16 +550,12 @@ namespace HA.Core
 
             // Look for an "ORDER BY <whatever>" clause
             m = rxOrderBy.Match(sqlCount);
-            if (!m.Success)
-            {
-                sqlOrderBy = null;
-            }
-            else
-            {
-                g = m.Groups[0];
-                sqlOrderBy = g.ToString();
-                sqlCount = sqlCount.Substring(0, g.Index) + sqlCount.Substring(g.Index + g.Length);
-            }
+            if (!m.Success) 
+                return true;
+
+            g = m.Groups[0];
+            sqlOrderBy = g.ToString();
+            sqlCount = sqlCount.Substring(0, g.Index) + sqlCount.Substring(g.Index + g.Length);
 
             return true;
         }
@@ -648,7 +645,7 @@ namespace HA.Core
                                 continue;
 
                             // Don't insert the primary key (except under oracle where we need bring in the next sequence value)
-                            if (autoIncrement && primaryKeyName != null && string.Compare(c.Key, primaryKeyName, true) == 0)
+                            if (autoIncrement && primaryKeyName != null && string.Compare(c.Key, primaryKeyName, StringComparison.OrdinalIgnoreCase) == 0)
                             {
                                 continue;
                             }
@@ -708,7 +705,7 @@ namespace HA.Core
             return Insert(pd.TableInfo.TableName, pd.TableInfo.PrimaryKey, pd.TableInfo.AutoIncrement, poco);
         }
 
-        private static DataTable CopyToDataTable<T>(IList<T> collection)
+        private static DataTable CopyToDataTable<T>(IEnumerable<T> collection)
         {
             var pd = PocoData.ForType(typeof(T));
             var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey).ToList();
@@ -1672,8 +1669,8 @@ END CATCH
             get { return new Sql(); }
         }
 
-        string _sql;
-        object[] _args;
+        readonly string _sql;
+        readonly object[] _args;
         Sql _rhs;
         string _sqlFinal;
         object[] _argsFinal;
