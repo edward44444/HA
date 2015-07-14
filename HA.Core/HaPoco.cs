@@ -424,6 +424,7 @@ namespace HA.Core
         public static string GetColumnName<T>(Expression<Func<T, object>> columnExpression)
         {
             var memberExpression = columnExpression.Body as MemberExpression;
+            // ReSharper disable once ConvertIfStatementToNullCoalescingExpression
             if (memberExpression == null)
             {
                 // ReSharper disable once PossibleNullReferenceException
@@ -444,6 +445,7 @@ namespace HA.Core
                 var pd = PocoData.ForType(typeof(T));
                 var tableName = EscapeTableName(pd.TableInfo.TableName);
                 var cols = string.Join(", ", (from c in pd.QueryColumns select tableName + "." + EscapeSqlIdentifier(c)).ToArray());
+                // ReSharper disable once ConvertIfStatementToConditionalTernaryExpression
                 if (!rxFrom.IsMatch(sql))
                     sql = string.Format("SELECT {0} FROM {1} WITH(NOLOCK) {2}", cols, tableName, sql);
                 else
@@ -1184,7 +1186,7 @@ END CATCH
             if (args != null && args.Length > 0)
             {
                 sb.Append("\n");
-                for (int i = 0; i < args.Length; i++)
+                for (var i = 0; i < args.Length; i++)
                 {
                     sb.AppendFormat("\t -> @{0} [{1}] = \"{2}\"\n", i, args[i].GetType().Name, args[i]);
                 }
@@ -1369,7 +1371,7 @@ END CATCH
                         return factory;
 
                     // Create the method
-                    var m = new DynamicMethod("petapoco_factory_" + PocoFactories.Count.ToString(), type, new Type[] { typeof(IDataReader) }, true);
+                    var m = new DynamicMethod("petapoco_factory_" + PocoFactories.Count, type, new[] { typeof(IDataReader) }, true);
                     var il = m.GetILGenerator();
 
                     if (type == typeof(object))
@@ -1377,10 +1379,10 @@ END CATCH
                         // var poco=new T()
                         il.Emit(OpCodes.Newobj, typeof(ExpandoObject).GetConstructor(Type.EmptyTypes));			// obj
 
-                        MethodInfo fnAdd = typeof(IDictionary<string, object>).GetMethod("Add");
+                        var fnAdd = typeof(IDictionary<string, object>).GetMethod("Add");
 
                         // Enumerate all fields generating a set assignment for the column
-                        for (int i = firstColumn; i < firstColumn + countColumns; i++)
+                        for (var i = firstColumn; i < firstColumn + countColumns; i++)
                         {
                             var srcType = r.GetFieldType(i);
 
@@ -1464,7 +1466,7 @@ END CATCH
                         il.Emit(OpCodes.Newobj, type.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new Type[0], null));
 
                         // Enumerate all fields generating a set assignment for the column
-                        for (int i = firstColumn; i < firstColumn + countColumns; i++)
+                        for (var i = firstColumn; i < firstColumn + countColumns; i++)
                         {
                             // Get the PocoColumn for this db column, ignore if not known
                             PocoColumn pc;
@@ -1488,10 +1490,10 @@ END CATCH
                             var converter = GetConverter(forceDateTimesToUtc, pc, srcType, dstType);
 
                             // Fast
-                            bool Handled = false;
+                            var handled = false;
                             if (converter == null)
                             {
-                                var valuegetter = typeof(IDataRecord).GetMethod("Get" + srcType.Name, new Type[] { typeof(int) });
+                                var valuegetter = typeof(IDataRecord).GetMethod("Get" + srcType.Name, new[] { typeof(int) });
                                 if (valuegetter != null
                                         && valuegetter.ReturnType == srcType
                                         && (valuegetter.ReturnType == dstType || valuegetter.ReturnType == Nullable.GetUnderlyingType(dstType)))
@@ -1503,16 +1505,16 @@ END CATCH
                                     // Convert to Nullable
                                     if (Nullable.GetUnderlyingType(dstType) != null)
                                     {
-                                        il.Emit(OpCodes.Newobj, dstType.GetConstructor(new Type[] { Nullable.GetUnderlyingType(dstType) }));
+                                        il.Emit(OpCodes.Newobj, dstType.GetConstructor(new[] { Nullable.GetUnderlyingType(dstType) }));
                                     }
 
                                     il.Emit(OpCodes.Callvirt, pc.PropertyInfo.GetSetMethod(true));		// poco
-                                    Handled = true;
+                                    handled = true;
                                 }
                             }
 
                             // Not so fast
-                            if (!Handled)
+                            if (!handled)
                             {
                                 // Setup stack for call to converter
                                 AddConverterToStack(il, converter);
@@ -1534,7 +1536,7 @@ END CATCH
                             il.MarkLabel(lblNext);
                         }
 
-                        var fnOnLoaded = RecurseInheritedTypes<MethodInfo>(type, (x) => x.GetMethod("OnLoaded", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new Type[0], null));
+                        var fnOnLoaded = RecurseInheritedTypes(type, (x) => x.GetMethod("OnLoaded", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new Type[0], null));
                         if (fnOnLoaded != null)
                         {
                             il.Emit(OpCodes.Dup);
@@ -1560,7 +1562,7 @@ END CATCH
                 if (converter != null)
                 {
                     // Add the converter
-                    int converterIndex = m_Converters.Count;
+                    var converterIndex = m_Converters.Count;
                     m_Converters.Add(converter);
 
                     // Generate IL to push the converter onto the stack
@@ -1587,12 +1589,12 @@ END CATCH
                     {
                         if (srcType != typeof(int))
                         {
-                            converter = delegate(object src) { return Convert.ChangeType(src, typeof(int), null); };
+                            converter = src => Convert.ChangeType(src, typeof (int), null);
                         }
                     }
                     else if (!dstType.IsAssignableFrom(srcType))
                     {
-                        converter = delegate(object src) { return Convert.ChangeType(src, dstType, null); };
+                        converter = src => Convert.ChangeType(src, dstType, null);
                     }
                 }
                 return converter;
@@ -1602,7 +1604,7 @@ END CATCH
             {
                 while (t != null)
                 {
-                    T info = cb(t);
+                    var info = cb(t);
                     if (info != null)
                         return info;
                     t = t.BaseType;
@@ -1612,11 +1614,11 @@ END CATCH
 
             static Dictionary<Type, PocoData> m_PocoDatas = new Dictionary<Type, PocoData>();
             static List<Func<object, object>> m_Converters = new List<Func<object, object>>();
-            static MethodInfo fnGetValue = typeof(IDataRecord).GetMethod("GetValue", new Type[] { typeof(int) });
-            static MethodInfo fnIsDBNull = typeof(IDataRecord).GetMethod("IsDBNull");
-            static FieldInfo fldConverters = typeof(PocoData).GetField("m_Converters", BindingFlags.Static | BindingFlags.GetField | BindingFlags.NonPublic);
-            static MethodInfo fnListGetItem = typeof(List<Func<object, object>>).GetProperty("Item").GetGetMethod();
-            static MethodInfo fnInvoke = typeof(Func<object, object>).GetMethod("Invoke");
+            static readonly MethodInfo fnGetValue = typeof(IDataRecord).GetMethod("GetValue", new Type[] { typeof(int) });
+            static readonly MethodInfo fnIsDBNull = typeof(IDataRecord).GetMethod("IsDBNull");
+            static readonly FieldInfo fldConverters = typeof(PocoData).GetField("m_Converters", BindingFlags.Static | BindingFlags.GetField | BindingFlags.NonPublic);
+            static readonly MethodInfo fnListGetItem = typeof(List<Func<object, object>>).GetProperty("Item").GetGetMethod();
+            static readonly MethodInfo fnInvoke = typeof(Func<object, object>).GetMethod("Invoke");
             public Type type;
             public string[] QueryColumns { get; private set; }
             public TableInfo TableInfo { get; private set; }
