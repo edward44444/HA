@@ -8,8 +8,6 @@
 <#@ import namespace="System.Data.SqlClient" #>
 <#@ import namespace="System.Data" #>
 <# 
-    //string connectionString = "server=192.168.0.169,1438;database=TCBasePay;user id=TCBasePay_test;password=!^E*7DFSd;"; 
-      //string connectionString = "server=192.168.0.169,1440;database=TCHotel;user id=admin_17u_com;password=sf!7%5eI3X;";
      string connectionString = "server=.;database=HA;user id=sa;password=abc123.;"; 
     SqlConnection conn = new SqlConnection(connectionString);
     conn.Open(); 
@@ -22,7 +20,7 @@
     {
     string tableName = row["TABLE_NAME"].ToString();	
     //表名
-    if(tableName!="FD_BaseData")continue;	 
+    if(tableName!="FA_CallBack")continue;	 
     string className = tableName.Substring(tableName.IndexOf('_') + 1);
     #>
     using System;

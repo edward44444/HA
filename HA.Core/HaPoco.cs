@@ -257,7 +257,7 @@ namespace HA.Core
             p.ParameterName = string.Format("@{0}", cmd.Parameters.Count);
             if (item == null)
             {
-                p.Value = DBNull.Value;
+                p.Value = string.Empty;
             }
             else
             {
@@ -268,7 +268,7 @@ namespace HA.Core
                 }
                 else if (t == typeof(DateTime)&&Convert.ToDateTime(p.Value).Year==1)
                 {
-                    p.Value = "1900-01-01";
+                    p.Value = DateTime.Parse("1900-01-01");
                 }
                 else if (t == typeof(Guid))
                 {
@@ -653,8 +653,8 @@ namespace HA.Core
 
                         cmd.CommandText = string.Format("INSERT INTO {0} ({1}) VALUES ({2})",
                                 EscapeTableName(tableName),
-                                string.Join(",", names.ToArray()),
-                                string.Join(",", values.ToArray())
+                                string.Join(",", names),
+                                string.Join(",", values)
                                 );
 
                         if (!autoIncrement)
@@ -1301,7 +1301,7 @@ END CATCH
                 // Get the primary key
                 var primaryKeyAttr = t.GetCustomAttributes<PrimaryKeyAttribute>(true).FirstOrDefault();
                 TableInfo.PrimaryKey = primaryKeyAttr == null ? "ID" : primaryKeyAttr.Value;
-                TableInfo.AutoIncrement = primaryKeyAttr == null ? false : primaryKeyAttr.AutoIncrement;
+                TableInfo.AutoIncrement = primaryKeyAttr != null && primaryKeyAttr.AutoIncrement;
 
                 var foreighKeyAttr = t.GetCustomAttributes<ForeighKeyAttribute>(true).FirstOrDefault();
                 TableInfo.Foreignkey = foreighKeyAttr == null ? "" : foreighKeyAttr.Value;
@@ -1314,11 +1314,13 @@ END CATCH
                     if (colAttr == null)
                         continue;
 
-                    var pc = new PocoColumn();
-                    pc.PropertyInfo = pi;
+                    var pc = new PocoColumn
+                    {
+                        PropertyInfo = pi,
+                        ColumnName = string.IsNullOrWhiteSpace(colAttr.Name) ? pi.Name : colAttr.Name
+                    };
 
                     // Work out the DB column name
-                    pc.ColumnName = string.IsNullOrWhiteSpace(colAttr.Name) ? pi.Name : colAttr.Name;
                     if ((colAttr as ResultColumnAttribute) != null)
                         pc.ResultColumn = true;
                     if ((colAttr as ChildColumnAttribute) != null)

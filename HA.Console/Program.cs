@@ -16,7 +16,15 @@ namespace HA.Console
 
             //Update();
 
-            Page();
+
+            var db=new Database("TC");
+            var model = new BaseDataDataModel { Id = 1000 };
+            //db.Insert(model);
+            //db.Insert(new List<BaseDataDataModel> { model });
+            //db.Update(model);
+            //db.Update(model, t => t.Name, t => t.GroupCode);
+            db.Update(new List<BaseDataDataModel> { model });
+            //Page();
         }
 
         private static void Page()
