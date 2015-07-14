@@ -681,7 +681,7 @@ namespace HA.Core
                                 pc.SetValue(poco, pc.ChangeType(id));
                             }
                         }
-                        return poco;
+                        return id;
                     }
                 }
                 finally
@@ -1216,10 +1216,12 @@ END CATCH
 
         public class ExpandoColumn : PocoColumn
         {
+            // ReSharper disable once PossibleNullReferenceException
             public override void SetValue(object target, object val) { (target as IDictionary<string, object>)[ColumnName] = val; }
             public override object GetValue(object target)
             {
-                object val = null;
+                object val;
+                // ReSharper disable once PossibleNullReferenceException
                 (target as IDictionary<string, object>).TryGetValue(ColumnName, out val);
                 return val;
             }
@@ -1237,12 +1239,17 @@ END CATCH
                 var t = o.GetType();
                 if (t == typeof(ExpandoObject))
                 {
-                    var pd = new PocoData();
-                    pd.TableInfo = new TableInfo();
-                    pd.Columns = new Dictionary<string, PocoColumn>(StringComparer.OrdinalIgnoreCase);
-                    pd.Columns.Add(primaryKeyName, new ExpandoColumn() { ColumnName = primaryKeyName });
+                    var pd = new PocoData
+                    {
+                        TableInfo = new TableInfo(),
+                        Columns = new Dictionary<string, PocoColumn>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            {primaryKeyName, new ExpandoColumn() {ColumnName = primaryKeyName}}
+                        }
+                    };
                     pd.TableInfo.PrimaryKey = primaryKeyName;
                     pd.TableInfo.AutoIncrement = true;
+                    // ReSharper disable once PossibleNullReferenceException
                     foreach (var col in (o as IDictionary<string, object>).Keys)
                     {
                         if (col != primaryKeyName)
@@ -1255,11 +1262,11 @@ END CATCH
                     return ForType(t);
                 }
             }
-            static ReaderWriterLockSlim RWLock = new ReaderWriterLockSlim();
+            static readonly ReaderWriterLockSlim RwLock = new ReaderWriterLockSlim();
             public static PocoData ForType(Type t)
             {
                 // Check cache
-                RWLock.EnterReadLock();
+                RwLock.EnterReadLock();
                 PocoData pd;
                 try
                 {
@@ -1268,11 +1275,11 @@ END CATCH
                 }
                 finally
                 {
-                    RWLock.ExitReadLock();
+                    RwLock.ExitReadLock();
                 }
 
                 // Cache it
-                RWLock.EnterWriteLock();
+                RwLock.EnterWriteLock();
                 try
                 {
                     // Check again
@@ -1286,14 +1293,14 @@ END CATCH
                 }
                 finally
                 {
-                    RWLock.ExitWriteLock();
+                    RwLock.ExitWriteLock();
                 }
                 return pd;
             }
 
             public PocoData(Type t)
             {
-                type = t;
+                Type = t;
                 TableInfo = new TableInfo();
 
                 // Get the table name
@@ -1347,36 +1354,37 @@ END CATCH
             {
                 // Check cache
                 var key = string.Format("{0}:{1}:{2}:{3}:{4}", sql, connString, forceDateTimesToUtc, firstColumn, countColumns);
-                RWLock.EnterReadLock();
+                RwLock.EnterReadLock();
                 try
                 {
                     // Have we already created it?
                     Delegate factory;
-                    if (PocoFactories.TryGetValue(key, out factory))
+                    if (_pocoFactories.TryGetValue(key, out factory))
                         return factory;
                 }
                 finally
                 {
-                    RWLock.ExitReadLock();
+                    RwLock.ExitReadLock();
                 }
 
                 // Take the writer lock
-                RWLock.EnterWriteLock();
+                RwLock.EnterWriteLock();
 
                 try
                 {
                     // Check again, just in case
                     Delegate factory;
-                    if (PocoFactories.TryGetValue(key, out factory))
+                    if (_pocoFactories.TryGetValue(key, out factory))
                         return factory;
 
                     // Create the method
-                    var m = new DynamicMethod("petapoco_factory_" + PocoFactories.Count, type, new[] { typeof(IDataReader) }, true);
+                    var m = new DynamicMethod("petapoco_factory_" + _pocoFactories.Count, Type, new[] { typeof(IDataReader) }, true);
                     var il = m.GetILGenerator();
 
-                    if (type == typeof(object))
+                    if (Type == typeof(object))
                     {
                         // var poco=new T()
+                        // ReSharper disable once AssignNullToNotNullAttribute
                         il.Emit(OpCodes.Newobj, typeof(ExpandoObject).GetConstructor(Type.EmptyTypes));			// obj
 
                         var fnAdd = typeof(IDictionary<string, object>).GetMethod("Add");
@@ -1392,8 +1400,8 @@ END CATCH
                             // Get the converter
                             Func<object, object> converter = null;
 
-                            if (forceDateTimesToUtc && converter == null && srcType == typeof(DateTime))
-                                converter = delegate(object src) { return new DateTime(((DateTime)src).Ticks, DateTimeKind.Utc); };
+                            if (forceDateTimesToUtc && srcType == typeof(DateTime))
+                                converter = src => new DateTime(((DateTime) src).Ticks, DateTimeKind.Utc);
 
                             // Setup stack for call to converter
                             AddConverterToStack(il, converter);
@@ -1428,11 +1436,11 @@ END CATCH
                             il.Emit(OpCodes.Callvirt, fnAdd);
                         }
                     }
-                    else if (type.IsValueType || type == typeof(string) || type == typeof(byte[]))
+                    else if (Type.IsValueType || Type == typeof(string) || Type == typeof(byte[]))
                     {
                         // Do we need to install a converter?
                         var srcType = r.GetFieldType(0);
-                        var converter = GetConverter(forceDateTimesToUtc, null, srcType, type);
+                        var converter = GetConverter(forceDateTimesToUtc, null, srcType, Type);
 
                         // "if (!rdr.IsDBNull(i))"
                         il.Emit(OpCodes.Ldarg_0);										// rdr
@@ -1458,12 +1466,12 @@ END CATCH
                             il.Emit(OpCodes.Callvirt, fnInvoke);
 
                         il.MarkLabel(lblFin);
-                        il.Emit(OpCodes.Unbox_Any, type);								// value converted
+                        il.Emit(OpCodes.Unbox_Any, Type);								// value converted
                     }
                     else
                     {
                         // var poco=new T()
-                        il.Emit(OpCodes.Newobj, type.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new Type[0], null));
+                        il.Emit(OpCodes.Newobj, Type.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new Type[0], null));
 
                         // Enumerate all fields generating a set assignment for the column
                         for (var i = firstColumn; i < firstColumn + countColumns; i++)
@@ -1505,6 +1513,7 @@ END CATCH
                                     // Convert to Nullable
                                     if (Nullable.GetUnderlyingType(dstType) != null)
                                     {
+                                        // ReSharper disable once AssignNullToNotNullAttribute
                                         il.Emit(OpCodes.Newobj, dstType.GetConstructor(new[] { Nullable.GetUnderlyingType(dstType) }));
                                     }
 
@@ -1536,7 +1545,7 @@ END CATCH
                             il.MarkLabel(lblNext);
                         }
 
-                        var fnOnLoaded = RecurseInheritedTypes(type, (x) => x.GetMethod("OnLoaded", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new Type[0], null));
+                        var fnOnLoaded = RecurseInheritedTypes(Type, x => x.GetMethod("OnLoaded", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new Type[0], null));
                         if (fnOnLoaded != null)
                         {
                             il.Emit(OpCodes.Dup);
@@ -1547,13 +1556,13 @@ END CATCH
                     il.Emit(OpCodes.Ret);
 
                     // Cache it, return it
-                    var del = m.CreateDelegate(Expression.GetFuncType(typeof(IDataReader), type));
-                    PocoFactories.Add(key, del);
+                    var del = m.CreateDelegate(Expression.GetFuncType(typeof(IDataReader), Type));
+                    _pocoFactories.Add(key, del);
                     return del;
                 }
                 finally
                 {
-                    RWLock.ExitWriteLock();
+                    RwLock.ExitWriteLock();
                 }
             }
 
@@ -1572,14 +1581,15 @@ END CATCH
                 }
             }
 
+            // ReSharper disable once UnusedParameter.Local
             private static Func<object, object> GetConverter(bool forceDateTimesToUtc, PocoColumn pc, Type srcType, Type dstType)
             {
                 Func<object, object> converter = null;
 
                 // Standard DateTime->Utc mapper
-                if (forceDateTimesToUtc && converter == null && srcType == typeof(DateTime) && (dstType == typeof(DateTime) || dstType == typeof(DateTime?)))
+                if (forceDateTimesToUtc && srcType == typeof(DateTime) && (dstType == typeof(DateTime) || dstType == typeof(DateTime?)))
                 {
-                    converter = delegate(object src) { return new DateTime(((DateTime)src).Ticks, DateTimeKind.Utc); };
+                    converter = src => new DateTime(((DateTime) src).Ticks, DateTimeKind.Utc);
                 }
 
                 // Forced type conversion including integral types -> enum
@@ -1612,18 +1622,18 @@ END CATCH
                 return default(T);
             }
 
-            static Dictionary<Type, PocoData> m_PocoDatas = new Dictionary<Type, PocoData>();
-            static List<Func<object, object>> m_Converters = new List<Func<object, object>>();
-            static readonly MethodInfo fnGetValue = typeof(IDataRecord).GetMethod("GetValue", new Type[] { typeof(int) });
+            static readonly Dictionary<Type, PocoData> m_PocoDatas = new Dictionary<Type, PocoData>();
+            static readonly List<Func<object, object>> m_Converters = new List<Func<object, object>>();
+            static readonly MethodInfo fnGetValue = typeof(IDataRecord).GetMethod("GetValue", new[] { typeof(int) });
             static readonly MethodInfo fnIsDBNull = typeof(IDataRecord).GetMethod("IsDBNull");
             static readonly FieldInfo fldConverters = typeof(PocoData).GetField("m_Converters", BindingFlags.Static | BindingFlags.GetField | BindingFlags.NonPublic);
             static readonly MethodInfo fnListGetItem = typeof(List<Func<object, object>>).GetProperty("Item").GetGetMethod();
             static readonly MethodInfo fnInvoke = typeof(Func<object, object>).GetMethod("Invoke");
-            public Type type;
+            public Type Type;
             public string[] QueryColumns { get; private set; }
             public TableInfo TableInfo { get; private set; }
             public Dictionary<string, PocoColumn> Columns { get; private set; }
-            Dictionary<string, Delegate> PocoFactories = new Dictionary<string, Delegate>();
+            readonly Dictionary<string, Delegate> _pocoFactories = new Dictionary<string, Delegate>();
         }
     }
 
