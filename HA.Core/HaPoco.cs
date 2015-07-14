@@ -154,10 +154,7 @@ namespace HA.Core
         // Close a previously opened connection
         public void CloseSharedConnection()
         {
-            if (_sharedConnectionDepth <= 0) 
-                return;
-            _sharedConnectionDepth--;
-            if (_sharedConnectionDepth != 0) 
+            if (_sharedConnectionDepth <= 0 || --_sharedConnectionDepth != 0)
                 return;
             OnConnectionClosing(_sharedConnection);
             _sharedConnection.Dispose();
@@ -169,8 +166,7 @@ namespace HA.Core
         // Use `using (var scope=db.Transaction) { scope.Complete(); }` to ensure correct semantics
         public void BeginTransaction()
         {
-            _transactionDepth++;
-            if (_transactionDepth != 1) 
+            if (++_transactionDepth != 1)
                 return;
             OpenSharedConnection();
             _transaction = _sharedConnection.BeginTransaction();
@@ -767,7 +763,7 @@ namespace HA.Core
             }
         }
 
-        private int BulkInsertProcess<T>(IList<T> collection, Func<string, T, string> sqlRebuild)
+        private int BulkInsertProcess<T>(IEnumerable<T> collection, Func<string, T, string> sqlRebuild)
         {
             try
             {
@@ -847,7 +843,7 @@ END CATCH
             sql.AppendFormat("INSERT {0} ({1}) VALUES {2}", EscapeTableName(pd.TableInfo.TableName), colsStr, string.Join(",", values));
         }
 
-        private static List<string> GetInsertValueStringList(IList<PocoColumn> columns, object poco)
+        private static List<string> GetInsertValueStringList(IEnumerable<PocoColumn> columns, object poco)
         {
             return columns.Select(t => GetInsertValueString(t, poco)).ToList();
         }
@@ -900,7 +896,7 @@ END CATCH
             }
         }
 
-        private int BulkInsertProcess<T>(IList<T> collection, string whereSql)
+        private int BulkInsertProcess<T>(IEnumerable<T> collection, string whereSql)
         {
             try
             {
@@ -1057,7 +1053,7 @@ END CATCH
             return Update(pd.TableInfo.TableName, pd.TableInfo.PrimaryKey, poco, null, (from c in expressions select GetColumnName(c)).ToList());
         }
 
-        private int BulkUpdateProcess<T>(string tableName, IList<string> primaryKeyNames, IList<T> collection, IList<string> columnNames, Func<string, T, string> sqlRebuild)
+        private int BulkUpdateProcess<T>(string tableName, string[] primaryKeyNames, IEnumerable<T> collection, string[] columnNames, Func<string, T, string> sqlRebuild)
         {
             try
             {
@@ -1102,7 +1098,7 @@ END CATCH
             }
         }
 
-        public int BulkUpdate<T>(string tableName, IList<string> primaryKeyNames, IList<T> collection, IList<string> columnNames, Func<string, T, string> sqlRebuild)
+        public int BulkUpdate<T>(string tableName, string[] primaryKeyNames, IList<T> collection, string[] columnNames, Func<string, T, string> sqlRebuild)
         {
             try
             {
@@ -1130,7 +1126,7 @@ END CATCH
         public int Update<T>(IList<T> collection,params Expression<Func<T, object>>[] expressions)
         {
             var pd = PocoData.ForType(typeof(T));
-            return BulkUpdate(pd.TableInfo.TableName, new[] { pd.TableInfo.PrimaryKey }, collection, (from c in expressions select GetColumnName(c)).ToList(), null);
+            return BulkUpdate(pd.TableInfo.TableName, new[] { pd.TableInfo.PrimaryKey }, collection, (from c in expressions select GetColumnName(c)).ToArray(), null);
         }
 
         public int Update<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, params Expression<Func<T, object>>[] expressions)
@@ -1141,7 +1137,7 @@ END CATCH
         public int Update<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection,Func<string, T, string> sqlRebuild, params Expression<Func<T, object>>[] expressions)
         {
             var pd = PocoData.ForType(typeof(T));
-            return BulkUpdate(pd.TableInfo.TableName, (from c in primaryKeyExpressions select GetColumnName(c)).ToList(), collection, (from c in expressions select GetColumnName(c)).ToList(), sqlRebuild);
+            return BulkUpdate(pd.TableInfo.TableName, (from c in primaryKeyExpressions select GetColumnName(c)).ToArray(), collection, (from c in expressions select GetColumnName(c)).ToArray(), sqlRebuild);
         }
 
         public int CommandTimeout { get; set; }
