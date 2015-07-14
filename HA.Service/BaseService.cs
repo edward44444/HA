@@ -35,19 +35,19 @@ namespace HA.Service
             Persistence.BulkCopy(collection);
         }
 
-        public int Insert<T>(List<T> collection)
+        public int BulkInsert<T>(List<T> collection)
         {
-            return Persistence.Insert(collection);
+            return Persistence.BulkInsert(collection);
         }
 
         public int Insert<T>(List<T> collection, Func<string, T, string> sqlRebuild)
         {
-           return Persistence.Insert(collection, sqlRebuild);
+            return Persistence.BulkInsert(collection, sqlRebuild);
         }
 
         public int Insert<T>(List<T> collection, string whereSql)
         {
-            return Persistence.Insert(collection, whereSql);
+            return Persistence.BulkInsert(collection, whereSql);
         }
 
         public int Update<T>(T poco, params Expression<Func<T, object>>[] expressions)
@@ -57,17 +57,17 @@ namespace HA.Service
 
         public int Update<T>(IList<T> collection, params Expression<Func<T, object>>[] expressions)
         {
-            return Persistence.Update(collection, expressions);
+            return Persistence.BulkUpdate(collection, expressions);
         }
 
         public int Update<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, params Expression<Func<T, object>>[] expressions)
         {
-            return Persistence.Update(primaryKeyExpressions, collection, expressions);
+            return Persistence.BulkUpdate(primaryKeyExpressions, collection, expressions);
         }
 
         public int Update<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, Func<string, T, string> sqlRebuild, params Expression<Func<T, object>>[] expressions)
         {
-            return Persistence.Update(primaryKeyExpressions, collection, sqlRebuild, expressions);
+            return Persistence.BulkUpdate(primaryKeyExpressions, collection, sqlRebuild, expressions);
         }
     }
 }

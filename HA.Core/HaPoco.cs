@@ -871,7 +871,7 @@ END CATCH
             return "N'" + value + "'";
         }
 
-        public int Insert<T>(IList<T> collection, Func<string, T, string> sqlRebuild=null)
+        public int BulkInsert<T>(IList<T> collection, Func<string, T, string> sqlRebuild = null)
         {
             try
             {
@@ -932,7 +932,7 @@ END CATCH
             }
         }
 
-        public int Insert<T>(IList<T> collection, string whereSql)
+        public int BulkInsert<T>(IList<T> collection, string whereSql)
         {
             try
             {
@@ -1123,18 +1123,18 @@ END CATCH
             }
         }
 
-        public int Update<T>(IList<T> collection,params Expression<Func<T, object>>[] expressions)
+        public int BulkUpdate<T>(IList<T> collection, params Expression<Func<T, object>>[] expressions)
         {
             var pd = PocoData.ForType(typeof(T));
             return BulkUpdate(pd.TableInfo.TableName, new[] { pd.TableInfo.PrimaryKey }, collection, (from c in expressions select GetColumnName(c)).ToArray(), null);
         }
 
-        public int Update<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, params Expression<Func<T, object>>[] expressions)
+        public int BulkUpdate<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, params Expression<Func<T, object>>[] expressions)
         {
-            return Update(primaryKeyExpressions, collection, null, expressions);
+            return BulkUpdate(primaryKeyExpressions, collection, null, expressions);
         }
 
-        public int Update<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection,Func<string, T, string> sqlRebuild, params Expression<Func<T, object>>[] expressions)
+        public int BulkUpdate<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, Func<string, T, string> sqlRebuild, params Expression<Func<T, object>>[] expressions)
         {
             var pd = PocoData.ForType(typeof(T));
             return BulkUpdate(pd.TableInfo.TableName, (from c in primaryKeyExpressions select GetColumnName(c)).ToArray(), collection, (from c in expressions select GetColumnName(c)).ToArray(), sqlRebuild);
@@ -1847,6 +1847,5 @@ END CATCH
             var alias = string.IsNullOrWhiteSpace(_alias) ? Database.EscapeTableName(Database.PocoData.ForType(typeof(T)).TableInfo.TableName) : _alias;
             return (Sql<T>)OrderByDescending(keySelectors.Select(t => alias + "." + Database.EscapeSqlIdentifier(Database.GetColumnName(t))).ToArray());
         }
-
     }
 }

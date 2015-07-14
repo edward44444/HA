@@ -35,19 +35,19 @@ namespace HA.Persistence
             Database.BulkCopy(collection);
         }
 
-        public int Insert<T>(List<T> collection)
+        public int BulkInsert<T>(List<T> collection)
         {
-            return Database.Insert(collection);
+            return Database.BulkInsert(collection);
         }
 
-        public int Insert<T>(List<T> collection,Func<string, T, string> sqlRebuild)
+        public int BulkInsert<T>(List<T> collection, Func<string, T, string> sqlRebuild)
         {
-           return Database.Insert(collection,sqlRebuild);
+            return Database.BulkInsert(collection, sqlRebuild);
         }
 
-        public int Insert<T>(List<T> collection,string whereSql)
+        public int BulkInsert<T>(List<T> collection, string whereSql)
         {
-            return Database.Insert(collection, whereSql);
+            return Database.BulkInsert(collection, whereSql);
         }
 
         public int Update<T>(T poco, params Expression<Func<T, object>>[] expressions)
@@ -55,19 +55,19 @@ namespace HA.Persistence
             return Database.Update(poco, expressions);
         }
 
-        public int Update<T>(IList<T> collection,params Expression<Func<T, object>>[] expressions)
+        public int BulkUpdate<T>(IList<T> collection, params Expression<Func<T, object>>[] expressions)
         {
-            return Database.Update(collection, expressions);
+            return Database.BulkUpdate(collection, expressions);
         }
 
-        public int Update<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, params Expression<Func<T, object>>[] expressions)
+        public int BulkUpdate<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, params Expression<Func<T, object>>[] expressions)
         {
-            return Database.Update(primaryKeyExpressions, collection, expressions);
+            return Database.BulkUpdate(primaryKeyExpressions, collection, expressions);
         }
 
-        public int Update<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection,Func<string, T, string> sqlRebuild, params Expression<Func<T, object>>[] expressions)
+        public int BulkUpdate<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, Func<string, T, string> sqlRebuild, params Expression<Func<T, object>>[] expressions)
         {
-            return Database.Update(primaryKeyExpressions, collection, sqlRebuild,expressions);
+            return Database.BulkUpdate(primaryKeyExpressions, collection, sqlRebuild, expressions);
         }
     }
 }
