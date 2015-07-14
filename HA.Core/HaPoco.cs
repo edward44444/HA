@@ -1591,7 +1591,13 @@ END CATCH
                 {
                     converter = src => new DateTime(((DateTime) src).Ticks, DateTimeKind.Utc);
                 }
-
+                if (srcType.Name == "SqlHierarchyId")
+                {
+                    converter = src =>
+                    {
+                        return src.ToString();
+                    };
+                }
                 // Forced type conversion including integral types -> enum
                 if (converter == null)
                 {

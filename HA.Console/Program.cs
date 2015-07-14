@@ -17,7 +17,9 @@ namespace HA.Console
             //Update();
 
             var db=new Database("HA");
-            var model = new BaseDataDataModel { Id = 1000 };
+            var list = db.Page<BaseDataDataModel>(1, 1, new Sql<BaseDataDataModel>().Where(t => t.RowStatus == 0));
+
+            var model = new BaseDataDataModel { Id = 1000,Path="/1/" };
             var num =Convert.ToInt32(db.Insert(model));
             //db.Insert(new List<BaseDataDataModel> { model });
             //db.Update(model);

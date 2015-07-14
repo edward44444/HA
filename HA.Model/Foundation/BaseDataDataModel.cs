@@ -1,6 +1,7 @@
 ﻿using System;
 using System.ComponentModel;
 using HA.Core;
+using Microsoft.SqlServer.Types;
 
 namespace HA.Model.Foundation
 {
@@ -15,6 +16,13 @@ namespace HA.Model.Foundation
         [Column("BDID")]
         [DisplayName("主键")]
         public int Id { get; set; }
+        
+        /// <summary>
+        /// 路径
+        /// </summary>
+        [Column("BDPath")]
+        [DisplayName("路径")]
+        public string Path { get; set; }
 
         /// <summary>
         /// 分组编码
