@@ -1,7 +1,6 @@
 ﻿using System;
 using System.ComponentModel;
 using HA.Core;
-using Microsoft.SqlServer.Types;
 
 namespace HA.Model.Foundation
 {
