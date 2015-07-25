@@ -13,6 +13,8 @@ namespace HA.Console
     {
         static void Main(string[] args)
         {
+
+
             //Insert();
 
             //Update();

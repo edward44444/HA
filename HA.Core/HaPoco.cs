@@ -5,7 +5,6 @@ using System.Configuration;
 using System.Data;
 using System.Data.Common;
 using System.Data.SqlClient;
-using System.Diagnostics;
 using System.Dynamic;
 using System.Linq;
 using System.Linq.Expressions;
@@ -117,7 +116,7 @@ namespace HA.Core
         public virtual void OnEndTransaction() { }
         public virtual void OnException(Exception x)
         {
-            Debug.WriteLine(x.ToString());
+            throw new DataBaseException(x.Message, LastCommand);
             //System.Diagnostics.Debug.WriteLine(LastCommand);
         }
 
@@ -624,19 +623,11 @@ namespace HA.Core
                         var names = new List<string>();
                         var values = new List<string>();
                         var index = 0;
-                        foreach (var c in pd.Columns)
+                        foreach (var c in pd.InsertColumns)
                         {
-                            // Don't insert result columns
-                            if (c.Value.ResultColumn)
-                                continue;
-
-                            // Don't insert the primary key (except under oracle where we need bring in the next sequence value)
-                            if (autoIncrement && primaryKeyName != null && string.Compare(c.Key, primaryKeyName, StringComparison.OrdinalIgnoreCase) == 0)
-                                continue;
-
-                            names.Add(EscapeSqlIdentifier(c.Key));
+                            names.Add(EscapeSqlIdentifier(c.ColumnName));
                             values.Add(string.Format("@{0}", index++));
-                            AddParam(cmd, c.Value.GetValue(poco));
+                            AddParam(cmd, c.GetValue(poco));
                         }
 
                         cmd.CommandText = string.Format("INSERT INTO {0} ({1}) VALUES ({2})",
@@ -938,7 +929,7 @@ END CATCH
         }
 
         // Update a record with values from a poco.  primary key value can be either supplied or read from the poco
-        private int Update(object poco, IEnumerable<string> columns)
+        private int Update(object poco, string[] columns)
         {
             try
             {
@@ -952,7 +943,7 @@ END CATCH
                         var primaryKeyName = pd.TableInfo.PrimaryKey;
                         var sb = new StringBuilder();
                         var index = 0;
-                        columns = columns ?? pd.InsertColumns.Select(c => c.ColumnName);
+                        columns = columns.Length > 0 ? columns : pd.InsertColumns.Select(c => c.ColumnName).ToArray();
                         foreach (var colname in columns)
                         {
                             var pc = pd.Columns[colname];
@@ -993,10 +984,10 @@ END CATCH
 
         public int Update<T>(T poco, params Expression<Func<T, object>>[] expressions)
         {
-            return Update(poco, (from c in expressions select GetColumnName(c)).ToList());
+            return Update(poco, (from c in expressions select GetColumnName(c)).ToArray());
         }
 
-        private int BulkUpdateProcess<T>(string tableName, string[] primaryKeyNames, IEnumerable<T> collection, string[] columnNames, Func<string, T, string> sqlRebuild)
+        private int BulkUpdateProcess<T>(string[] primaryKeyNames, IEnumerable<T> collection, string[] columnNames, Func<string, T, string> sqlRebuild)
         {
             try
             {
@@ -1012,7 +1003,7 @@ END CATCH
                     {
                         var setSqls = columns.Select(t => string.Format("{0}={1}", EscapeSqlIdentifier(t.ColumnName), GetInsertValueString(t, poco))).ToList();
                         var whereSqls = primaryKeyColumns.Select(t => string.Format("{0}={1}", EscapeSqlIdentifier(t.ColumnName), GetInsertValueString(t, poco))).ToList();
-                        var updateSql = string.Format(@"UPDATE {0} SET {1} WHERE {2};", EscapeSqlIdentifier(tableName), string.Join(",", setSqls), string.Join(" AND ", whereSqls));
+                        var updateSql = string.Format(@"UPDATE {0} SET {1} WHERE {2};", EscapeSqlIdentifier(pd.TableInfo.TableName), string.Join(",", setSqls), string.Join(" AND ", whereSqls));
                         if (sqlRebuild != null)
                         {
                             updateSql = sqlRebuild(updateSql, poco);
@@ -1041,7 +1032,7 @@ END CATCH
             }
         }
 
-        public int BulkUpdate<T>(string tableName, string[] primaryKeyNames, IList<T> collection, string[] columnNames, Func<string, T, string> sqlRebuild)
+        public int BulkUpdate<T>(string[] primaryKeyNames, IList<T> collection, string[] columnNames, Func<string, T, string> sqlRebuild)
         {
             try
             {
@@ -1052,7 +1043,7 @@ END CATCH
                 {
                     while (rowIndex < rowCount)
                     {
-                        returnValue += BulkUpdateProcess(tableName, primaryKeyNames, collection.Skip(rowIndex).Take(1000).ToList(), columnNames, sqlRebuild);
+                        returnValue += BulkUpdateProcess(primaryKeyNames, collection.Skip(rowIndex).Take(1000).ToList(), columnNames, sqlRebuild);
                         rowIndex += 1000;
                     }
                     scope.Complete();
@@ -1069,7 +1060,7 @@ END CATCH
         public int BulkUpdate<T>(IList<T> collection, params Expression<Func<T, object>>[] expressions)
         {
             var pd = PocoData.ForType(typeof(T));
-            return BulkUpdate(pd.TableInfo.TableName, new[] { pd.TableInfo.PrimaryKey }, collection, (from c in expressions select GetColumnName(c)).ToArray(), null);
+            return BulkUpdate(new[] { pd.TableInfo.PrimaryKey }, collection, (from c in expressions select GetColumnName(c)).ToArray(), null);
         }
 
         public int BulkUpdate<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, params Expression<Func<T, object>>[] expressions)
@@ -1079,8 +1070,7 @@ END CATCH
 
         public int BulkUpdate<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, Func<string, T, string> sqlRebuild, params Expression<Func<T, object>>[] expressions)
         {
-            var pd = PocoData.ForType(typeof(T));
-            return BulkUpdate(pd.TableInfo.TableName, (from c in primaryKeyExpressions select GetColumnName(c)).ToArray(), collection, (from c in expressions select GetColumnName(c)).ToArray(), sqlRebuild);
+            return BulkUpdate((from c in primaryKeyExpressions select GetColumnName(c)).ToArray(), collection, (from c in expressions select GetColumnName(c)).ToArray(), sqlRebuild);
         }
 
         public int CommandTimeout { get; set; }
@@ -1282,8 +1272,15 @@ END CATCH
 
                 // Build column list for automatic select
                 QueryColumns = (from c in Columns where !c.Value.ResultColumn select c.Key).ToArray();
-
-                InsertColumns = (from c in Columns where !c.Value.ResultColumn && c.Key != TableInfo.PrimaryKey select c.Value).ToList();
+                InsertColumns = new List<PocoColumn>();
+                foreach(var c in Columns.Values)
+                {
+                    if (c.ResultColumn)
+                        continue;
+                    if (TableInfo.AutoIncrement && string.Compare(c.ColumnName, TableInfo.PrimaryKey, StringComparison.OrdinalIgnoreCase) == 0)
+                        continue;
+                    InsertColumns.Add(c);
+                }
             }
 
             static bool IsIntegralType(Type t)
@@ -1536,10 +1533,7 @@ END CATCH
                 }
                 if (srcType.Name == "SqlHierarchyId")
                 {
-                    converter = src =>
-                    {
-                        return src.ToString();
-                    };
+                    converter = src => src.ToString();
                 }
                 // Forced type conversion including integral types -> enum
                 if (converter == null)
@@ -1809,5 +1803,15 @@ END CATCH
             var alias = string.IsNullOrWhiteSpace(_alias) ? Database.EscapeTableName(Database.PocoData.ForType(typeof(T)).TableInfo.TableName) : _alias;
             return (Sql<T>)OrderByDescending(keySelectors.Select(t => alias + "." + Database.EscapeSqlIdentifier(Database.GetColumnName(t))).ToArray());
         }
+    }
+
+    public class DataBaseException : Exception
+    {
+        public DataBaseException(string message,string sql):base(message)
+        {
+            Sql = sql;
+        }
+
+        public string Sql { get; private set; }
     }
 }
