@@ -264,7 +264,7 @@ namespace HA.Core
                 {
                     p.Value = (int)item;
                 }
-                else if (t == typeof(DateTime)&&Convert.ToDateTime(p.Value).Year==1)
+                else if (t == typeof(DateTime)&&Convert.ToDateTime(item).Year==1)
                 {
                     p.Value = DateTime.Parse("1900-01-01");
                 }

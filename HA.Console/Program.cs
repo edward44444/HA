@@ -13,8 +13,9 @@ namespace HA.Console
     {
         static void Main(string[] args)
         {
-
-
+            var db = new Database("HA");
+            var model = new BaseDataDataModel { Id = 1000, Path = "/1/", GroupCode="SB", Code = "A", Name = "测试", CreatedBy = "edward", CreatedOn = DateTime.Now, RowStatus = 10 };
+            db.Insert(model);
             //Insert();
 
             //Update();
