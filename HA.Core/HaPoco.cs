@@ -80,7 +80,6 @@ namespace HA.Core
         public long TotalItems { get; set; }
         public long ItemsPerPage { get; set; }
         public List<T> Items { get; set; }
-        public object Context { get; set; }
     }
 
     // Pass as parameter value to force to DBType.AnsiString
@@ -110,7 +109,7 @@ namespace HA.Core
         string _lastSql;
         object[] _lastArgs;
 
-        public virtual IDbConnection OnConnectionOpened(IDbConnection conn) { return conn; }
+        public virtual void OnConnectionOpened(IDbConnection conn) { }
         public virtual void OnConnectionClosing(IDbConnection conn) { }
         public virtual void OnExecutingCommand(IDbCommand cmd) { }
         public virtual void OnExecutedCommand(IDbCommand cmd) { }
@@ -143,7 +142,7 @@ namespace HA.Core
                 _sharedConnection.ConnectionString = _connectionString;
                 _sharedConnection.Open();
 
-                _sharedConnection = OnConnectionOpened(_sharedConnection);
+                OnConnectionOpened(_sharedConnection);
 
                 if (KeepConnectionAlive) 
                     _sharedConnectionDepth++;
@@ -154,7 +153,7 @@ namespace HA.Core
         // Close a previously opened connection
         public void CloseSharedConnection()
         {
-            if (_sharedConnectionDepth <= 0 || --_sharedConnectionDepth != 0)
+            if (--_sharedConnectionDepth != 0)
                 return;
             OnConnectionClosing(_sharedConnection);
             _sharedConnection.Dispose();
@@ -238,10 +237,10 @@ namespace HA.Core
                 if (argVal is IEnumerable && !(argVal is string) && !(argVal is byte[]))
                 {
                     var sb = new StringBuilder();
-                    foreach (var i in argVal as IEnumerable)
+                    foreach (var val in argVal as IEnumerable)
                     {
                         sb.Append((sb.Length == 0 ? "@" : ",@") + argsDest.Count.ToString());
-                        argsDest.Add(i);
+                        argsDest.Add(val);
                     }
                     return sb.ToString();
                 }
@@ -294,16 +293,6 @@ namespace HA.Core
                 else if (t == typeof(bool))
                 {
                     p.Value = ((bool)item) ? 1 : 0;
-                }
-                else if (item.GetType().Name == "SqlGeography") //SqlGeography is a CLR Type
-                {
-                    p.GetType().GetProperty("UdtTypeName").SetValue(p, "geography", null); //geography is the equivalent SQL Server Type
-                    p.Value = item;
-                }
-                else if (item.GetType().Name == "SqlGeometry") //SqlGeometry is a CLR Type
-                {
-                    p.GetType().GetProperty("UdtTypeName").SetValue(p, "geometry", null); //geography is the equivalent SQL Server Type
-                    p.Value = item;
                 }
                 else
                 {
@@ -437,20 +426,16 @@ namespace HA.Core
 
         static string AddSelectClause<T>(string sql)
         {
-            if (sql.StartsWith(";"))
-                return sql.Substring(1);
-
-            if (!rxSelect.IsMatch(sql))
-            {
-                var pd = PocoData.ForType(typeof(T));
-                var tableName = EscapeTableName(pd.TableInfo.TableName);
-                var cols = string.Join(", ", (from c in pd.QueryColumns select tableName + "." + EscapeSqlIdentifier(c)).ToArray());
-                // ReSharper disable once ConvertIfStatementToConditionalTernaryExpression
-                if (!rxFrom.IsMatch(sql))
-                    sql = string.Format("SELECT {0} FROM {1} WITH(NOLOCK) {2}", cols, tableName, sql);
-                else
-                    sql = string.Format("SELECT {0} {1}", cols, sql);
-            }
+            if (rxSelect.IsMatch(sql)) 
+                return sql;
+            var pd = PocoData.ForType(typeof(T));
+            var tableName = EscapeTableName(pd.TableInfo.TableName);
+            var cols = string.Join(", ", (from c in pd.QueryColumns select tableName + "." + EscapeSqlIdentifier(c)));
+            // ReSharper disable once ConvertIfStatementToConditionalTernaryExpression
+            if (!rxFrom.IsMatch(sql))
+                sql = string.Format("SELECT {0} FROM {1} WITH(NOLOCK) {2}", cols, tableName, sql);
+            else
+                sql = string.Format("SELECT {0} {1}", cols, sql);
             return sql;
         }
 
@@ -623,7 +608,7 @@ namespace HA.Core
             return SkipTake<T>(skip, take, sql.SQL, sql.Arguments);
         }
 
-        private object Insert(string tableName, string primaryKeyName, bool autoIncrement, object poco)
+        public object Insert(object poco)
         {
             try
             {
@@ -632,7 +617,10 @@ namespace HA.Core
                 {
                     using (var cmd = CreateCommand(_sharedConnection, ""))
                     {
-                        var pd = PocoData.ForObject(poco, primaryKeyName);
+                        var pd = PocoData.ForType(poco.GetType());
+                        var tableName = pd.TableInfo.TableName;
+                        var autoIncrement = pd.TableInfo.AutoIncrement;
+                        var primaryKeyName = pd.TableInfo.PrimaryKey;
                         var names = new List<string>();
                         var values = new List<string>();
                         var index = 0;
@@ -644,9 +632,7 @@ namespace HA.Core
 
                             // Don't insert the primary key (except under oracle where we need bring in the next sequence value)
                             if (autoIncrement && primaryKeyName != null && string.Compare(c.Key, primaryKeyName, StringComparison.OrdinalIgnoreCase) == 0)
-                            {
                                 continue;
-                            }
 
                             names.Add(EscapeSqlIdentifier(c.Key));
                             values.Add(string.Format("@{0}", index++));
@@ -696,17 +682,10 @@ namespace HA.Core
             }
         }
 
-        // Insert an annotated poco object
-        public object Insert(object poco)
-        {
-            var pd = PocoData.ForType(poco.GetType());
-            return Insert(pd.TableInfo.TableName, pd.TableInfo.PrimaryKey, pd.TableInfo.AutoIncrement, poco);
-        }
-
         private static DataTable CopyToDataTable<T>(IEnumerable<T> collection)
         {
             var pd = PocoData.ForType(typeof(T));
-            var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey).ToList();
+            var columns = pd.InsertColumns;
             var dt = new DataTable();
             foreach (var column in columns)
             {
@@ -735,7 +714,7 @@ namespace HA.Core
         public void BulkCopy<T>(IList<T> collection)
         {
             var pd = PocoData.ForType(typeof(T));
-            var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey).ToList();
+            var columns = pd.InsertColumns;
             var dt = CopyToDataTable(collection);
             try
             {
@@ -800,14 +779,13 @@ END CATCH
         private static void BuildBulkInsertSql<T>(IEnumerable<T> collection, StringBuilder sql, Func<string, T, string> sqlRebuild)
         {
             var pd = PocoData.ForType(typeof(T));
-            var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey).ToList();
+            var columns = pd.InsertColumns;
+            var childColumns = pd.Columns.Values.Where(c => c.ChildColumn).ToList();
             var colsStr = string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
             foreach (var poco in collection)
             {
                 var values = GetInsertValueStringList(columns, poco);
                 var insertSql = string.Format(@"INSERT {0} ({1}) VALUES ({2});", EscapeTableName(pd.TableInfo.TableName), colsStr, string.Join(",", values));
-
-                var childColumns = pd.Columns.Values.Where(c => c.ChildColumn).ToList();
                 if (childColumns.Count > 0)
                 {
                     var sqlAppend = new StringBuilder();
@@ -839,15 +817,15 @@ END CATCH
         private static void BuildChildBulkInsertSql(Type type,IEnumerable collection, StringBuilder sql)
         {
             var pd = PocoData.ForType(type);
-            var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey && c.ColumnName != pd.TableInfo.Foreignkey).ToList();
+            var columns = pd.InsertColumns.Where(c => c.ColumnName != pd.TableInfo.Foreignkey).ToList();
             var colsStr = EscapeSqlIdentifier(pd.TableInfo.Foreignkey) + "," + string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
-            var values = (from object poco in collection select "(SCOPE_IDENTITY()," + string.Join(",", GetInsertValueStringList(columns, poco)) + ")").ToList();
+            var values = (from object poco in collection select "(SCOPE_IDENTITY()," + string.Join(",", GetInsertValueStringList(columns, poco)) + ")");
             sql.AppendFormat("INSERT {0} ({1}) VALUES {2}", EscapeTableName(pd.TableInfo.TableName), colsStr, string.Join(",", values));
         }
 
-        private static List<string> GetInsertValueStringList(IEnumerable<PocoColumn> columns, object poco)
+        private static IEnumerable<string> GetInsertValueStringList(IEnumerable<PocoColumn> columns, object poco)
         {
-            return columns.Select(t => GetInsertValueString(t, poco)).ToList();
+            return columns.Select(t => GetInsertValueString(t, poco));
         }
 
         private static string GetInsertValueString(PocoColumn column, object poco)
@@ -906,7 +884,7 @@ END CATCH
                 using (var cmd = CreateCommand(_sharedConnection, ""))
                 {
                     var pd = PocoData.ForType(typeof(T));
-                    var columns = pd.Columns.Values.Where(c => c.ResultColumn == false && c.ColumnName != pd.TableInfo.PrimaryKey).ToList();
+                    var columns = pd.InsertColumns;
                     var colsStr = string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
                     var sql = new StringBuilder();
                     sql.AppendLine("IF(OBJECT_ID('tempdb..#T1') IS NOT NULL) DROP TABLE #T1");
@@ -960,7 +938,7 @@ END CATCH
         }
 
         // Update a record with values from a poco.  primary key value can be either supplied or read from the poco
-        private int Update(string tableName, string primaryKeyName, object poco, object primaryKeyValue, IList<string> columns)
+        private int Update(object poco, IEnumerable<string> columns)
         {
             try
             {
@@ -969,57 +947,25 @@ END CATCH
                 {
                     using (var cmd = CreateCommand(_sharedConnection, ""))
                     {
+                        var pd = PocoData.ForType(poco.GetType());
+                        var tableName = pd.TableInfo.TableName;
+                        var primaryKeyName = pd.TableInfo.PrimaryKey;
                         var sb = new StringBuilder();
                         var index = 0;
-                        var pd = PocoData.ForObject(poco, primaryKeyName);
-                        if (columns == null)
+                        columns = columns ?? pd.InsertColumns.Select(c => c.ColumnName);
+                        foreach (var colname in columns)
                         {
-                            foreach (var i in pd.Columns)
-                            {
-                                // Don't update the primary key, but grab the value if we don't have it
-                                if (string.Compare(i.Key, primaryKeyName, StringComparison.OrdinalIgnoreCase) == 0)
-                                {
-                                    if (primaryKeyValue == null)
-                                        primaryKeyValue = i.Value.GetValue(poco);
-                                    continue;
-                                }
+                            var pc = pd.Columns[colname];
 
-                                // Dont update result only columns
-                                if (i.Value.ResultColumn)
-                                    continue;
+                            // Build the sql
+                            if (index > 0)
+                                sb.Append(", ");
+                            sb.AppendFormat("{0} = @{1}", EscapeSqlIdentifier(colname), index++);
 
-                                // Build the sql
-                                if (index > 0)
-                                    sb.Append(", ");
-                                sb.AppendFormat("{0} = @{1}", EscapeSqlIdentifier(i.Key), index++);
-
-                                // Store the parameter in the command
-                                AddParam(cmd, i.Value.GetValue(poco));
-                            }
+                            // Store the parameter in the command
+                            AddParam(cmd, pc.GetValue(poco));
                         }
-                        else
-                        {
-                            foreach (var colname in columns)
-                            {
-                                var pc = pd.Columns[colname];
-
-                                // Build the sql
-                                if (index > 0)
-                                    sb.Append(", ");
-                                sb.AppendFormat("{0} = @{1}", EscapeSqlIdentifier(colname), index++);
-
-                                // Store the parameter in the command
-                                AddParam(cmd, pc.GetValue(poco));
-                            }
-
-                            // Grab primary key value
-                            if (primaryKeyValue == null)
-                            {
-                                var pc = pd.Columns[primaryKeyName];
-                                primaryKeyValue = pc.GetValue(poco);
-                            }
-
-                        }
+                        var primaryKeyValue = pd.Columns[primaryKeyName].GetValue(poco);
 
                         cmd.CommandText = string.Format("UPDATE {0} SET {1} WHERE {2} = @{3}",
                             EscapeTableName(tableName), sb, EscapeSqlIdentifier(primaryKeyName), index);
@@ -1047,12 +993,7 @@ END CATCH
 
         public int Update<T>(T poco, params Expression<Func<T, object>>[] expressions)
         {
-            var pd = PocoData.ForType(typeof(T));
-            if (expressions.Length == 0)
-            {
-                return Update(pd.TableInfo.TableName, pd.TableInfo.PrimaryKey, poco, null, null);
-            }
-            return Update(pd.TableInfo.TableName, pd.TableInfo.PrimaryKey, poco, null, (from c in expressions select GetColumnName(c)).ToList());
+            return Update(poco, (from c in expressions select GetColumnName(c)).ToList());
         }
 
         private int BulkUpdateProcess<T>(string tableName, string[] primaryKeyNames, IEnumerable<T> collection, string[] columnNames, Func<string, T, string> sqlRebuild)
@@ -1341,6 +1282,8 @@ END CATCH
 
                 // Build column list for automatic select
                 QueryColumns = (from c in Columns where !c.Value.ResultColumn select c.Key).ToArray();
+
+                InsertColumns = (from c in Columns where !c.Value.ResultColumn && c.Key != TableInfo.PrimaryKey select c.Value).ToList();
             }
 
             static bool IsIntegralType(Type t)
@@ -1637,6 +1580,7 @@ END CATCH
             static readonly MethodInfo fnInvoke = typeof(Func<object, object>).GetMethod("Invoke");
             public Type Type;
             public string[] QueryColumns { get; private set; }
+            public List<PocoColumn>  InsertColumns { get; private set; }
             public TableInfo TableInfo { get; private set; }
             public Dictionary<string, PocoColumn> Columns { get; private set; }
             readonly Dictionary<string, Delegate> _pocoFactories = new Dictionary<string, Delegate>();
