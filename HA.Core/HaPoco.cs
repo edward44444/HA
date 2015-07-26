@@ -117,7 +117,6 @@ namespace HA.Core
         public virtual void OnException(Exception x)
         {
             throw new DataBaseException(x.Message, LastCommand);
-            //System.Diagnostics.Debug.WriteLine(LastCommand);
         }
 
         public Database(string connectionStringName)
@@ -143,7 +142,7 @@ namespace HA.Core
 
                 OnConnectionOpened(_sharedConnection);
 
-                if (KeepConnectionAlive) 
+                if (KeepConnectionAlive)
                     _sharedConnectionDepth++;
             }
             _sharedConnectionDepth++;
@@ -177,9 +176,9 @@ namespace HA.Core
         {
             OnEndTransaction();
 
-            if (_transactionCancelled) 
+            if (_transactionCancelled)
                 _transaction.Rollback();
-            else 
+            else
                 _transaction.Commit();
 
             _transaction.Dispose();
@@ -192,14 +191,14 @@ namespace HA.Core
         public void AbortTransaction()
         {
             _transactionCancelled = true;
-            if ((--_transactionDepth) == 0) 
+            if ((--_transactionDepth) == 0)
                 CleanupTransaction();
         }
 
         // Complete the transaction
         public void CompleteTransaction()
         {
-            if ((--_transactionDepth) == 0) 
+            if ((--_transactionDepth) == 0)
                 CleanupTransaction();
         }
 
@@ -264,7 +263,7 @@ namespace HA.Core
                 {
                     p.Value = (int)item;
                 }
-                else if (t == typeof(DateTime)&&Convert.ToDateTime(item).Year==1)
+                else if (t == typeof(DateTime) && Convert.ToDateTime(item).Year == 1)
                 {
                     p.Value = DateTime.Parse("1900-01-01");
                 }
@@ -319,7 +318,7 @@ namespace HA.Core
                 AddParam(cmd, item);
             }
 
-            if (!string.IsNullOrEmpty(sql)) 
+            if (!string.IsNullOrEmpty(sql))
                 DoPreExecute(cmd);
 
             return cmd;
@@ -425,7 +424,7 @@ namespace HA.Core
 
         static string AddSelectClause<T>(string sql)
         {
-            if (rxSelect.IsMatch(sql)) 
+            if (rxSelect.IsMatch(sql))
                 return sql;
             var pd = PocoData.ForType(typeof(T));
             var tableName = EscapeTableName(pd.TableInfo.TableName);
@@ -532,7 +531,7 @@ namespace HA.Core
 
             // Look for an "ORDER BY <whatever>" clause
             m = rxOrderBy.Match(sqlCount);
-            if (!m.Success) 
+            if (!m.Success)
                 return true;
 
             g = m.Groups[0];
@@ -561,7 +560,7 @@ namespace HA.Core
                                     sqlOrderBy ?? "ORDER BY (SELECT NULL)", sqlSelectRemoved, args.Length, args.Length + 1);
             args = args.Concat(new object[] { skip, skip + take }).ToArray();
         }
-	
+
         public Page<T> Page<T>(long page, long itemsPerPage, string sql, params object[] args)
         {
             string sqlCount, sqlPage;
@@ -684,8 +683,8 @@ namespace HA.Core
             }
             foreach (var poco in collection)
             {
-                var values = new object[columns.Count];
-                for (var i = 0; i < columns.Count; i++)
+                var values = new object[columns.Length];
+                for (var i = 0; i < columns.Length; i++)
                 {
                     values[i] = columns[i].GetValue(poco);
                     if (values[i] == null)
@@ -770,25 +769,26 @@ END CATCH
         private static void BuildBulkInsertSql<T>(IEnumerable<T> collection, StringBuilder sql, Func<string, T, string> sqlRebuild)
         {
             var pd = PocoData.ForType(typeof(T));
+            var tableName=EscapeTableName(pd.TableInfo.TableName);
             var columns = pd.InsertColumns;
             var childColumns = pd.Columns.Values.Where(c => c.ChildColumn).ToList();
             var colsStr = string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
             foreach (var poco in collection)
             {
                 var values = GetInsertValueStringList(columns, poco);
-                var insertSql = string.Format(@"INSERT {0} ({1}) VALUES ({2});", EscapeTableName(pd.TableInfo.TableName), colsStr, string.Join(",", values));
+                var insertSql = string.Format(@"INSERT {0} ({1}) VALUES ({2});", tableName, colsStr, string.Join(",", values));
                 if (childColumns.Count > 0)
                 {
                     var sqlAppend = new StringBuilder();
                     foreach (var c in childColumns)
                     {
                         var value = c.GetValue(poco);
-                        if(value==null)
+                        if (value == null)
                         {
                             continue;
                         }
                         var childItems = value as IList;
-                        if (childItems != null && childItems.Count==0)
+                        if (childItems != null && childItems.Count == 0)
                         {
                             continue;
                         }
@@ -805,7 +805,7 @@ END CATCH
             }
         }
 
-        private static void BuildChildBulkInsertSql(Type type,IEnumerable collection, StringBuilder sql)
+        private static void BuildChildBulkInsertSql(Type type, IEnumerable collection, StringBuilder sql)
         {
             var pd = PocoData.ForType(type);
             var columns = pd.InsertColumns.Where(c => c.ColumnName != pd.TableInfo.Foreignkey).ToList();
@@ -1140,23 +1140,10 @@ END CATCH
             public PropertyInfo PropertyInfo;
             public bool ResultColumn;
             public bool ChildColumn;
+            public bool AutoIncrement;
             public virtual void SetValue(object target, object val) { PropertyInfo.SetValue(target, val, null); }
             public virtual object GetValue(object target) { return PropertyInfo.GetValue(target, null); }
             public virtual object ChangeType(object val) { return Convert.ChangeType(val, PropertyInfo.PropertyType); }
-        }
-
-        public class ExpandoColumn : PocoColumn
-        {
-            // ReSharper disable once PossibleNullReferenceException
-            public override void SetValue(object target, object val) { (target as IDictionary<string, object>)[ColumnName] = val; }
-            public override object GetValue(object target)
-            {
-                object val;
-                // ReSharper disable once PossibleNullReferenceException
-                (target as IDictionary<string, object>).TryGetValue(ColumnName, out val);
-                return val;
-            }
-            public override object ChangeType(object val) { return val; }
         }
 
         public class PocoData
@@ -1165,34 +1152,6 @@ END CATCH
             {
             }
 
-            public static PocoData ForObject(object o, string primaryKeyName)
-            {
-                var t = o.GetType();
-                if (t == typeof(ExpandoObject))
-                {
-                    var pd = new PocoData
-                    {
-                        TableInfo = new TableInfo(),
-                        Columns = new Dictionary<string, PocoColumn>(StringComparer.OrdinalIgnoreCase)
-                        {
-                            {primaryKeyName, new ExpandoColumn() {ColumnName = primaryKeyName}}
-                        }
-                    };
-                    pd.TableInfo.PrimaryKey = primaryKeyName;
-                    pd.TableInfo.AutoIncrement = true;
-                    // ReSharper disable once PossibleNullReferenceException
-                    foreach (var col in (o as IDictionary<string, object>).Keys)
-                    {
-                        if (col != primaryKeyName)
-                            pd.Columns.Add(col, new ExpandoColumn() { ColumnName = col });
-                    }
-                    return pd;
-                }
-                else
-                {
-                    return ForType(t);
-                }
-            }
             static readonly ReaderWriterLockSlim RwLock = new ReaderWriterLockSlim();
             public static PocoData ForType(Type t)
             {
@@ -1265,6 +1224,8 @@ END CATCH
                         pc.ResultColumn = true;
                     if ((colAttr as ChildColumnAttribute) != null)
                         pc.ChildColumn = true;
+                    if (TableInfo.AutoIncrement && string.Compare(TableInfo.PrimaryKey, pc.ColumnName, StringComparison.OrdinalIgnoreCase) == 0)
+                        pc.AutoIncrement = true;
 
                     // Store it
                     Columns.Add(pc.ColumnName, pc);
@@ -1272,15 +1233,7 @@ END CATCH
 
                 // Build column list for automatic select
                 QueryColumns = (from c in Columns where !c.Value.ResultColumn select c.Key).ToArray();
-                InsertColumns = new List<PocoColumn>();
-                foreach(var c in Columns.Values)
-                {
-                    if (c.ResultColumn)
-                        continue;
-                    if (TableInfo.AutoIncrement && string.Compare(c.ColumnName, TableInfo.PrimaryKey, StringComparison.OrdinalIgnoreCase) == 0)
-                        continue;
-                    InsertColumns.Add(c);
-                }
+                InsertColumns = (from c in Columns where !c.Value.ResultColumn && !c.Value.AutoIncrement select c.Value).ToArray();
             }
 
             static bool IsIntegralType(Type t)
@@ -1341,7 +1294,7 @@ END CATCH
                             Func<object, object> converter = null;
 
                             if (forceDateTimesToUtc && srcType == typeof(DateTime))
-                                converter = src => new DateTime(((DateTime) src).Ticks, DateTimeKind.Utc);
+                                converter = src => new DateTime(((DateTime)src).Ticks, DateTimeKind.Utc);
 
                             // Setup stack for call to converter
                             AddConverterToStack(il, converter);
@@ -1529,7 +1482,7 @@ END CATCH
                 // Standard DateTime->Utc mapper
                 if (forceDateTimesToUtc && srcType == typeof(DateTime) && (dstType == typeof(DateTime) || dstType == typeof(DateTime?)))
                 {
-                    converter = src => new DateTime(((DateTime) src).Ticks, DateTimeKind.Utc);
+                    converter = src => new DateTime(((DateTime)src).Ticks, DateTimeKind.Utc);
                 }
                 if (srcType.Name == "SqlHierarchyId")
                 {
@@ -1542,7 +1495,7 @@ END CATCH
                     {
                         if (srcType != typeof(int))
                         {
-                            converter = src => Convert.ChangeType(src, typeof (int), null);
+                            converter = src => Convert.ChangeType(src, typeof(int), null);
                         }
                     }
                     else if (!dstType.IsAssignableFrom(srcType))
@@ -1574,7 +1527,7 @@ END CATCH
             static readonly MethodInfo fnInvoke = typeof(Func<object, object>).GetMethod("Invoke");
             public Type Type;
             public string[] QueryColumns { get; private set; }
-            public List<PocoColumn>  InsertColumns { get; private set; }
+            public PocoColumn[] InsertColumns { get; private set; }
             public TableInfo TableInfo { get; private set; }
             public Dictionary<string, PocoColumn> Columns { get; private set; }
             readonly Dictionary<string, Delegate> _pocoFactories = new Dictionary<string, Delegate>();
