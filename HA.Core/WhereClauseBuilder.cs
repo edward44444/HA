@@ -104,12 +104,12 @@ namespace HA.Core
             return node;
         }
 
-        private void VisitLeft(Expression node)
+        protected virtual void VisitLeft(Expression node)
         {
             Visit(node);
         }
 
-        private void VisitRight(Expression node)
+        protected virtual void VisitRight(Expression node)
         {
             switch (node.NodeType)
             {

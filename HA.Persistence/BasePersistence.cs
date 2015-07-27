@@ -25,7 +25,7 @@ namespace HA.Persistence
             return Database.Page<T>(page, itemsPerPage, sql);
         }
 
-        public T Insert<T>(T model)
+        public T Insert<T>(object model)
         {
             return (T)Database.Insert(model);
         }

@@ -40,6 +40,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="OnClauseBuilder.cs" />
     <Compile Include="WhereClauseBuilder.cs" />
     <Compile Include="HaPoco.cs" />
     <Compile Include="PetaPoco.cs" />

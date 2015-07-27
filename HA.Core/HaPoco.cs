@@ -22,7 +22,7 @@ namespace HA.Core
     {
         public ColumnAttribute() { }
         public ColumnAttribute(string name) { Name = name; }
-        public string Name { get; set; }
+        public string Name { get; private set; }
     }
 
     // marks property as a result column and optionally supplies column name
@@ -34,10 +34,19 @@ namespace HA.Core
     }
 
     [AttributeUsage(AttributeTargets.Property)]
-    public class ChildColumnAttribute:ResultColumnAttribute
+    public class ChildColumnAttribute : ResultColumnAttribute
     {
-        public ChildColumnAttribute() { }
-        public ChildColumnAttribute(string name) : base(name) { }
+        public ChildColumnAttribute(string foreignKey)
+        {
+            ForeignKey = foreignKey;
+        }
+
+        public ChildColumnAttribute(string foreignKey, string name)
+            : base(name)
+        {
+            ForeignKey = foreignKey;
+        }
+        public string ForeignKey { get; private set; }
     }
 
     // Specify the table name of a poco
@@ -61,16 +70,6 @@ namespace HA.Core
         public bool AutoIncrement { get; set; }
     }
 
-    [AttributeUsage(AttributeTargets.Class)]
-    public class ForeighKeyAttribute : Attribute
-    {
-        public ForeighKeyAttribute(string foreighKey)
-        {
-            Value = foreighKey;
-        }
-        public string Value { get; private set; }
-    }
-
     // Results from paged request
     public class Page<T>
     {
@@ -92,7 +91,6 @@ namespace HA.Core
     {
         public string TableName { get; set; }
         public string PrimaryKey { get; set; }
-        public string Foreignkey { get; set; }
         public bool AutoIncrement { get; set; }
     }
 
@@ -504,6 +502,11 @@ namespace HA.Core
             return Fetch<T>(sql.SQL, sql.Arguments);
         }
 
+        public List<T> Fetch<T>(Sql<T> sql)
+        {
+            return Fetch<T>(sql.SQL, sql.Arguments);
+        }
+
         static readonly Regex rxColumns = new Regex(@"\A\s*SELECT\s+((?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|.)*?)(?<!,\s+)\bFROM\b", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
         static readonly Regex rxOrderBy = new Regex(@"\bORDER\s+BY\s+(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\.])+(?:\s+(?:ASC|DESC))?(?:\s*,\s*(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\.])+(?:\s+(?:ASC|DESC))?)*", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
         static readonly Regex rxDistinct = new Regex(@"\ADISTINCT\s", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
@@ -792,7 +795,7 @@ END CATCH
                             continue;
                         }
                         childItems = childItems ?? new[] { value };
-                        BuildChildBulkInsertSql(childItems[0].GetType(), childItems, sqlAppend);
+                        BuildChildBulkInsertSql(childItems[0].GetType(),c.ForeignKey, childItems, sqlAppend);
                     }
                     insertSql += sqlAppend.ToString();
                 }
@@ -804,11 +807,11 @@ END CATCH
             }
         }
 
-        private static void BuildChildBulkInsertSql(Type type, IEnumerable collection, StringBuilder sql)
+        private static void BuildChildBulkInsertSql(Type type, string foreignkey, IEnumerable collection, StringBuilder sql)
         {
             var pd = PocoData.ForType(type);
-            var columns = pd.Columns.Values.Where(c => !c.ResultColumn && !c.AutoIncrement && c.ColumnName != pd.TableInfo.Foreignkey).ToList();
-            var colsStr = EscapeSqlIdentifier(pd.TableInfo.Foreignkey) + "," + string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
+            var columns = pd.Columns.Values.Where(c => !c.ResultColumn && !c.AutoIncrement && c.ColumnName != foreignkey).ToList();
+            var colsStr = EscapeSqlIdentifier(foreignkey) + "," + string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
             var values = (from object poco in collection select "(SCOPE_IDENTITY()," + string.Join(",", GetInsertValueStringList(columns, poco)) + ")");
             sql.AppendFormat("INSERT {0} ({1}) VALUES {2}", EscapeTableName(pd.TableInfo.TableName), colsStr, string.Join(",", values));
         }
@@ -1140,6 +1143,7 @@ END CATCH
             public PropertyInfo PropertyInfo;
             public bool ResultColumn;
             public bool ChildColumn;
+            public string ForeignKey;
             public bool AutoIncrement;
             public virtual void SetValue(object target, object val) { PropertyInfo.SetValue(target, val, null); }
             public virtual object GetValue(object target) { return PropertyInfo.GetValue(target, null); }
@@ -1202,9 +1206,6 @@ END CATCH
                 TableInfo.PrimaryKey = primaryKeyAttr == null ? "ID" : primaryKeyAttr.Value;
                 TableInfo.AutoIncrement = primaryKeyAttr != null && primaryKeyAttr.AutoIncrement;
 
-                var foreighKeyAttr = t.GetCustomAttributes<ForeighKeyAttribute>(true).FirstOrDefault();
-                TableInfo.Foreignkey = foreighKeyAttr == null ? "" : foreighKeyAttr.Value;
-
                 Columns = new Dictionary<string, PocoColumn>(StringComparer.OrdinalIgnoreCase);
                 foreach (var pi in t.GetProperties())
                 {
@@ -1223,7 +1224,10 @@ END CATCH
                     if ((colAttr as ResultColumnAttribute) != null)
                         pc.ResultColumn = true;
                     if ((colAttr as ChildColumnAttribute) != null)
+                    {
                         pc.ChildColumn = true;
+                        pc.ForeignKey = (colAttr as ChildColumnAttribute).ForeignKey;
+                    }
                     if (TableInfo.AutoIncrement && string.Compare(TableInfo.PrimaryKey, pc.ColumnName, StringComparison.OrdinalIgnoreCase) == 0)
                         pc.AutoIncrement = true;
 
@@ -1697,7 +1701,7 @@ END CATCH
 
         public class SqlJoinClause
         {
-            private readonly Sql _sql;
+            protected readonly Sql _sql;
 
             public SqlJoinClause(Sql sql)
             {
@@ -1707,6 +1711,30 @@ END CATCH
             public Sql On(string onClause, params object[] args)
             {
                 return _sql.Append("ON " + onClause, args);
+            }
+        }
+
+        public class SqlJoinClause<TLeft,TRight> : SqlJoinClause
+        {
+            private readonly string _alias;
+
+            public SqlJoinClause(Sql sql)
+                : base(sql)
+            {
+            }
+
+            public SqlJoinClause(Sql sql, string alias)
+                : base(sql)
+            {
+                _alias = alias;
+            }
+
+            public Sql<TLeft> On(Expression<Func<TLeft, TRight, bool>> predicate)
+            {
+                var alias = string.IsNullOrWhiteSpace(_alias) ? Database.EscapeTableName(Database.PocoData.ForType(typeof(TRight)).TableInfo.TableName) : _alias;
+                var expressionVisitor = new OnClauseBuilder(alias);
+                expressionVisitor.Visit(predicate);
+                return (Sql<TLeft>)_sql.Append("ON " + expressionVisitor.Sql, expressionVisitor.Arguments);
             }
         }
     }
@@ -1753,6 +1781,18 @@ END CATCH
         {
             var alias = string.IsNullOrWhiteSpace(_alias) ? Database.EscapeTableName(Database.PocoData.ForType(typeof(T)).TableInfo.TableName) : _alias;
             return (Sql<T>)OrderByDescending(keySelectors.Select(t => alias + "." + Database.EscapeSqlIdentifier(Database.GetColumnName(t))).ToArray());
+        }
+
+        public SqlJoinClause<T, TRight> InnerJoin<TRight>(string alias = null)
+        {
+            var pd = Database.PocoData.ForType(typeof(TRight));
+            return new SqlJoinClause<T, TRight>(Append(new Sql("INNER JOIN " + pd.TableInfo.TableName + " " + (alias ?? string.Empty) + " WITH(NOLOCK)")),alias);
+        }
+
+        public SqlJoinClause<TLeft, TRight> LeftJoin<TLeft, TRight>(string alias = null)
+        {
+            var pd = Database.PocoData.ForType(typeof(TRight));
+            return new SqlJoinClause<TLeft, TRight>(Append(new Sql("LEFT JOIN " + pd.TableInfo.TableName + " " + (alias ?? string.Empty) + " WITH(NOLOCK)")), alias);
         }
     }
 

@@ -6,7 +6,6 @@ namespace HA.Model.Foundation
 {
     [TableName("FD_BaseData")]
     [PrimaryKey("BDID")]
-    [ForeighKey("BDGroupCode")]
     public class BaseDataDataModel
     {
         /// <summary>

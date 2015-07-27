@@ -13,12 +13,15 @@ namespace HA.Console
     {
         static void Main(string[] args)
         {
-            var db = new Database("HA");
-            var model = new BaseDataDataModel { Id = 1000, Path = "/1/", GroupCode="SB", Code = "A", Name = "测试", CreatedBy = "edward", CreatedOn = DateTime.Now, RowStatus = 10 };
-            //var list = new List<BaseDataDataModel>();
-            //list.Add(model);
-            //list.Add(new BaseDataDataModel { Id = 2000, Path = "/1/", GroupCode = "SB2", Code = "A", Name = "测试", CreatedBy = "edward", CreatedOn = DateTime.Now, RowStatus = 10 });
-            db.Update(model,t=>t.CreatedBy);
+            //Insert();
+
+
+            //var db = new Database("HA");
+            //var model = new BaseDataDataModel { Id = 1000, Path = "/1/", GroupCode = "SB", Code = "A", Name = "测试", CreatedBy = "edward", CreatedOn = DateTime.Now, RowStatus = 10 };
+            ////var list = new List<BaseDataDataModel>();
+            ////list.Add(model);
+            ////list.Add(new BaseDataDataModel { Id = 2000, Path = "/1/", GroupCode = "SB2", Code = "A", Name = "测试", CreatedBy = "edward", CreatedOn = DateTime.Now, RowStatus = 10 });
+            //db.BulkUpdate(new Expression<Func<BaseDataDataModel, object>>[] { t => t.Name }, new[] { model }, t => t.CreatedBy);
 
 
             //Insert();
@@ -36,7 +39,14 @@ namespace HA.Console
             //db.BulkUpdate(new List<BaseDataDataModel> { model }, t => t.Name);
             //Page();
 
-
+            var db = new Database("HA");
+            var sql = new Sql<BaseDataDataModel>("T1")
+                .Select(t => t.Name)
+                .From()
+                .InnerJoin<BaseDataGroupDataModel>("T2").On((t1,t2)=>t1.RowStatus==t2.RowStatus)
+                .Where(t => t.RowStatus == 10 && t.Name == "edward")
+                .Where(t => t.Id < 1000);
+            var list = db.Fetch(sql);
         }
 
         private static void Page()
@@ -60,8 +70,8 @@ namespace HA.Console
             var service = new BaseDataService();
             var list = new List<BaseDataDataModel>
             {
-                new BaseDataDataModel {GroupCode = "X", Code = "1", Name = "edward4", CreatedBy = "edward"},
-                new BaseDataDataModel {GroupCode = "X", Code = "1", Name = "edward5", CreatedBy = "edward"}
+                new BaseDataDataModel {Path="/", GroupCode = "X", Code = "1", Name = "edward4", CreatedBy = "edward"},
+                new BaseDataDataModel {Path="/",GroupCode = "X", Code = "1", Name = "edward5", CreatedBy = "edward"}
             };
             var list2 = new List<BaseDataDataModel>();
             //list2.Add(new BaseDataDataModel { GroupCode = "Y", Code = "1", Name = "edward4", CreatedBy = "edward" });
@@ -71,7 +81,7 @@ namespace HA.Console
                 new BaseDataGroupDataModel {Code = "A",CreatedOn=DateTime.Now, BaseDataList = list},
                 new BaseDataGroupDataModel {Code = "B", BaseDataList = list2}
             };
-            service.Insert(listGroup);
+            service.BulkInsert(listGroup);
         }
     }
 }

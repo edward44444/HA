@@ -25,9 +25,9 @@ namespace HA.Service
             return Persistence.Page(page, itemsPerPage, sql);
         }
 
-        public T Insert<T>(T model)
+        public T Insert<T>(object model)
         {
-            return Persistence.Insert(model);
+            return Persistence.Insert<T>(model);
         }
 
         public void BulkCopy<T>(List<T> collection)
