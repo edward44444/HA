@@ -619,10 +619,11 @@ namespace HA.Core
                         var tableName = pd.TableInfo.TableName;
                         var autoIncrement = pd.TableInfo.AutoIncrement;
                         var primaryKeyName = pd.TableInfo.PrimaryKey;
+                        var columns= pd.Columns.Values.Where(c => !c.ResultColumn && !c.AutoIncrement);
                         var names = new List<string>();
                         var values = new List<string>();
                         var index = 0;
-                        foreach (var c in pd.InsertColumns)
+                        foreach (var c in columns)
                         {
                             names.Add(EscapeSqlIdentifier(c.ColumnName));
                             values.Add(string.Format("@{0}", index++));
@@ -672,10 +673,8 @@ namespace HA.Core
             }
         }
 
-        private static DataTable CopyToDataTable<T>(IEnumerable<T> collection)
+        private static DataTable CopyToDataTable<T>(IEnumerable<T> collection, PocoColumn[] columns)
         {
-            var pd = PocoData.ForType(typeof(T));
-            var columns = pd.InsertColumns;
             var dt = new DataTable();
             foreach (var column in columns)
             {
@@ -704,8 +703,8 @@ namespace HA.Core
         public void BulkCopy<T>(IList<T> collection)
         {
             var pd = PocoData.ForType(typeof(T));
-            var columns = pd.InsertColumns;
-            var dt = CopyToDataTable(collection);
+            var columns = pd.Columns.Values.Where(c => !c.ResultColumn && !c.AutoIncrement).ToArray();
+            var dt = CopyToDataTable(collection, columns);
             try
             {
                 OpenSharedConnection();
@@ -770,7 +769,7 @@ END CATCH
         {
             var pd = PocoData.ForType(typeof(T));
             var tableName=EscapeTableName(pd.TableInfo.TableName);
-            var columns = pd.InsertColumns;
+            var columns = pd.Columns.Values.Where(c => !c.ResultColumn && !c.AutoIncrement).ToList();
             var childColumns = pd.Columns.Values.Where(c => c.ChildColumn).ToList();
             var colsStr = string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
             foreach (var poco in collection)
@@ -808,7 +807,7 @@ END CATCH
         private static void BuildChildBulkInsertSql(Type type, IEnumerable collection, StringBuilder sql)
         {
             var pd = PocoData.ForType(type);
-            var columns = pd.InsertColumns.Where(c => c.ColumnName != pd.TableInfo.Foreignkey).ToList();
+            var columns = pd.Columns.Values.Where(c => !c.ResultColumn && !c.AutoIncrement && c.ColumnName != pd.TableInfo.Foreignkey).ToList();
             var colsStr = EscapeSqlIdentifier(pd.TableInfo.Foreignkey) + "," + string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
             var values = (from object poco in collection select "(SCOPE_IDENTITY()," + string.Join(",", GetInsertValueStringList(columns, poco)) + ")");
             sql.AppendFormat("INSERT {0} ({1}) VALUES {2}", EscapeTableName(pd.TableInfo.TableName), colsStr, string.Join(",", values));
@@ -875,7 +874,7 @@ END CATCH
                 using (var cmd = CreateCommand(_sharedConnection, ""))
                 {
                     var pd = PocoData.ForType(typeof(T));
-                    var columns = pd.InsertColumns;
+                    var columns = pd.Columns.Values.Where(c => !c.ResultColumn && !c.AutoIncrement).ToList();
                     var colsStr = string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
                     var sql = new StringBuilder();
                     sql.AppendLine("IF(OBJECT_ID('tempdb..#T1') IS NOT NULL) DROP TABLE #T1");
@@ -943,7 +942,7 @@ END CATCH
                         var primaryKeyName = pd.TableInfo.PrimaryKey;
                         var sb = new StringBuilder();
                         var index = 0;
-                        columns = columns.Length > 0 ? columns : pd.InsertColumns.Select(c => c.ColumnName).ToArray();
+                        columns = columns.Length > 0 ? columns : pd.Columns.Values.Where(c => !c.ResultColumn && !c.AutoIncrement).Select(c => c.ColumnName).ToArray();
                         foreach (var colname in columns)
                         {
                             var pc = pd.Columns[colname];
@@ -1001,12 +1000,13 @@ END CATCH
                     sql.AppendLine("BEGIN TRY");
                     foreach (var poco in collection)
                     {
-                        var setSqls = columns.Select(t => string.Format("{0}={1}", EscapeSqlIdentifier(t.ColumnName), GetInsertValueString(t, poco))).ToList();
-                        var whereSqls = primaryKeyColumns.Select(t => string.Format("{0}={1}", EscapeSqlIdentifier(t.ColumnName), GetInsertValueString(t, poco))).ToList();
+                        var obj = poco;
+                        var setSqls = columns.Select(t => string.Format("{0}={1}", EscapeSqlIdentifier(t.ColumnName), GetInsertValueString(t, obj))).ToList();
+                        var whereSqls = primaryKeyColumns.Select(t => string.Format("{0}={1}", EscapeSqlIdentifier(t.ColumnName), GetInsertValueString(t, obj))).ToList();
                         var updateSql = string.Format(@"UPDATE {0} SET {1} WHERE {2};", EscapeSqlIdentifier(pd.TableInfo.TableName), string.Join(",", setSqls), string.Join(" AND ", whereSqls));
                         if (sqlRebuild != null)
                         {
-                            updateSql = sqlRebuild(updateSql, poco);
+                            updateSql = sqlRebuild(updateSql, obj);
                         }
                         sql.AppendLine(updateSql);
                     }
@@ -1233,7 +1233,6 @@ END CATCH
 
                 // Build column list for automatic select
                 QueryColumns = (from c in Columns where !c.Value.ResultColumn select c.Key).ToArray();
-                InsertColumns = (from c in Columns where !c.Value.ResultColumn && !c.Value.AutoIncrement select c.Value).ToArray();
             }
 
             static bool IsIntegralType(Type t)
@@ -1527,7 +1526,6 @@ END CATCH
             static readonly MethodInfo fnInvoke = typeof(Func<object, object>).GetMethod("Invoke");
             public Type Type;
             public string[] QueryColumns { get; private set; }
-            public PocoColumn[] InsertColumns { get; private set; }
             public TableInfo TableInfo { get; private set; }
             public Dictionary<string, PocoColumn> Columns { get; private set; }
             readonly Dictionary<string, Delegate> _pocoFactories = new Dictionary<string, Delegate>();
