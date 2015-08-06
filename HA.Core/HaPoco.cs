@@ -36,11 +36,7 @@ namespace HA.Core
     [AttributeUsage(AttributeTargets.Property)]
     public class ChildColumnAttribute : ResultColumnAttribute
     {
-        public ChildColumnAttribute(string foreignKey)
-        {
-            ForeignKey = foreignKey;
-        }
-
+        public ChildColumnAttribute(string foreignKey) { ForeignKey = foreignKey; }
         public ChildColumnAttribute(string foreignKey, string name)
             : base(name)
         {
@@ -274,14 +270,14 @@ namespace HA.Core
                 else if (t == typeof(string))
                 {
                     // ReSharper disable once PossibleNullReferenceException
-                    p.Size = Math.Max((item as string).Length + 1, 4000);		// Help query plan caching by using common size
+                    p.Size = Math.Max((item as string).Length, 4000);		// Help query plan caching by using common size
                     p.Value = item;
                 }
                 else if (t == typeof(AnsiString))
                 {
                     // Thanks @DataChomp for pointing out the SQL Server indexing performance hit of using wrong string type on varchar
                     // ReSharper disable once PossibleNullReferenceException
-                    p.Size = Math.Max((item as AnsiString).Value.Length + 1, 4000);
+                    p.Size = Math.Max((item as AnsiString).Value.Length, 4000);
                     // ReSharper disable once PossibleNullReferenceException
                     p.Value = (item as AnsiString).Value;
                     p.DbType = DbType.AnsiString;
@@ -695,7 +691,7 @@ namespace HA.Core
                     }
                     else if (values[i] is DateTime && Convert.ToDateTime(values[i]).Year == 1)
                     {
-                        values[i] = "1900-01-01";
+                        values[i] = DateTime.Parse("1900-01-01");
                     }
                 }
                 dt.Rows.Add(values);
@@ -703,7 +699,7 @@ namespace HA.Core
             return dt;
         }
 
-        public void BulkCopy<T>(IList<T> collection)
+        public void BulkCopy<T>(IEnumerable<T> collection)
         {
             var pd = PocoData.ForType(typeof(T));
             var columns = pd.Columns.Values.Where(c => !c.ResultColumn && !c.AutoIncrement).ToArray();
@@ -738,15 +734,47 @@ namespace HA.Core
 
         private int BulkInsertProcess<T>(IEnumerable<T> collection, Func<string, T, string> sqlRebuild)
         {
-            try
+            using (var cmd = CreateCommand(_sharedConnection, ""))
             {
-                OpenSharedConnection();
-                using (var cmd = CreateCommand(_sharedConnection, ""))
+                var sql = new StringBuilder();
+                sql.AppendLine("BEGIN TRY");
+                // insert sql
+                var pd = PocoData.ForType(typeof(T));
+                var tableName = EscapeTableName(pd.TableInfo.TableName);
+                var columns = pd.Columns.Values.Where(c => !c.ResultColumn && !c.AutoIncrement).ToList();
+                var childColumns = pd.Columns.Values.Where(c => c.ChildColumn).ToList();
+                var colsStr = string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
+                foreach (var poco in collection)
                 {
-                    var sql = new StringBuilder();
-                    sql.AppendLine("BEGIN TRY");
-                    BuildBulkInsertSql(collection, sql, sqlRebuild);
-                    sql.AppendLine(@"
+                    var values = GetInsertValueStringList(columns, poco);
+                    var insertSql = string.Format(@"INSERT {0} ({1}) VALUES ({2});", tableName, colsStr, string.Join(",", values));
+                    if (childColumns.Count > 0)
+                    {
+                        var sqlAppend = new StringBuilder();
+                        foreach (var c in childColumns)
+                        {
+                            var value = c.GetValue(poco);
+                            if (value == null)
+                            {
+                                continue;
+                            }
+                            var childItems = value as IList;
+                            if (childItems != null && childItems.Count == 0)
+                            {
+                                continue;
+                            }
+                            childItems = childItems ?? new[] { value };
+                            BuildChildBulkInsertSql(childItems[0].GetType(), c.ForeignKey, childItems, sqlAppend);
+                        }
+                        insertSql += sqlAppend.ToString();
+                    }
+                    if (sqlRebuild != null)
+                    {
+                        insertSql = sqlRebuild(insertSql, poco);
+                    }
+                    sql.AppendLine(insertSql);
+                }
+                sql.AppendLine(@"
 END TRY
 BEGIN CATCH
     DECLARE @ErrorMessage NVARCHAR(4000)=ERROR_MESSAGE();
@@ -755,55 +783,11 @@ BEGIN CATCH
     RAISERROR (@ErrorMessage, @ErrorSeverity,@ErrorState);
 END CATCH
 ");
-                    cmd.CommandText = sql.ToString();
-                    DoPreExecute(cmd);
-                    var returnValue = cmd.ExecuteNonQuery();
-                    OnExecutedCommand(cmd);
-                    return returnValue;
-                }
-            }
-            finally
-            {
-                CloseSharedConnection();
-            }
-        }
-
-        private static void BuildBulkInsertSql<T>(IEnumerable<T> collection, StringBuilder sql, Func<string, T, string> sqlRebuild)
-        {
-            var pd = PocoData.ForType(typeof(T));
-            var tableName=EscapeTableName(pd.TableInfo.TableName);
-            var columns = pd.Columns.Values.Where(c => !c.ResultColumn && !c.AutoIncrement).ToList();
-            var childColumns = pd.Columns.Values.Where(c => c.ChildColumn).ToList();
-            var colsStr = string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
-            foreach (var poco in collection)
-            {
-                var values = GetInsertValueStringList(columns, poco);
-                var insertSql = string.Format(@"INSERT {0} ({1}) VALUES ({2});", tableName, colsStr, string.Join(",", values));
-                if (childColumns.Count > 0)
-                {
-                    var sqlAppend = new StringBuilder();
-                    foreach (var c in childColumns)
-                    {
-                        var value = c.GetValue(poco);
-                        if (value == null)
-                        {
-                            continue;
-                        }
-                        var childItems = value as IList;
-                        if (childItems != null && childItems.Count == 0)
-                        {
-                            continue;
-                        }
-                        childItems = childItems ?? new[] { value };
-                        BuildChildBulkInsertSql(childItems[0].GetType(),c.ForeignKey, childItems, sqlAppend);
-                    }
-                    insertSql += sqlAppend.ToString();
-                }
-                if (sqlRebuild != null)
-                {
-                    insertSql = sqlRebuild(insertSql, poco);
-                }
-                sql.AppendLine(insertSql);
+                cmd.CommandText = sql.ToString();
+                DoPreExecute(cmd);
+                var returnValue = cmd.ExecuteNonQuery();
+                OnExecutedCommand(cmd);
+                return returnValue;
             }
         }
 
@@ -828,6 +812,10 @@ END CATCH
             {
                 return "''";
             }
+            if (IsNumericType(column.PropertyInfo.PropertyType))
+            {
+                return value.ToString();
+            }
             var type = value.GetType();
             if (type.IsEnum)
             {
@@ -836,10 +824,6 @@ END CATCH
             else if (type == typeof(DateTime))
             {
                 value = Convert.ToDateTime(value).Year == 1 ? "1900-01-01" : Convert.ToDateTime(value).ToString("yyyy-MM-dd HH:mm:ss.fff");
-            }
-            if (IsNumericType(column.PropertyInfo.PropertyType))
-            {
-                return value.ToString();
             }
             return "N'" + value + "'";
         }

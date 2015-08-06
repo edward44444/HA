@@ -40,13 +40,20 @@ namespace HA.Console
             //Page();
 
             var db = new Database("HA");
-            var sql = new Sql<BaseDataDataModel>("T1")
-                .Select(t => t.Name)
-                .From()
-                .InnerJoin<BaseDataGroupDataModel>("T2").On((t1,t2)=>t1.RowStatus==t2.RowStatus)
-                .Where(t => t.RowStatus == 10 && t.Name == "edward")
-                .Where(t => t.Id < 1000);
-            var list = db.Fetch(sql);
+            var list = new List<BaseDataDataModel>
+            {
+                new BaseDataDataModel {Path="/", GroupCode = "X", Code = "1", Name = "edward4", CreatedBy = "edward"},
+                new BaseDataDataModel {Path="/",GroupCode = "X", Code = "1", Name = "edward5", CreatedBy = "edward"}
+            };
+            db.BulkInsert(list);
+
+            //var sql = new Sql<BaseDataDataModel>("T1")
+            //    .Select(t => t.Name)
+            //    .From()
+            //    .InnerJoin<BaseDataGroupDataModel>("T2").On((t1,t2)=>t1.RowStatus==t2.RowStatus)
+            //    .Where(t => t.RowStatus == 10 && t.Name == "edward")
+            //    .Where(t => t.Id < 1000);
+            //var list = db.Fetch(sql);
         }
 
         private static void Page()
