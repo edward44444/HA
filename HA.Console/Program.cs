@@ -45,7 +45,19 @@ namespace HA.Console
                 new BaseDataDataModel {Path="/", GroupCode = "X", Code = "1", Name = "edward4", CreatedBy = "edward"},
                 new BaseDataDataModel {Path="/",GroupCode = "X", Code = "1", Name = "edward5", CreatedBy = "edward"}
             };
-            db.BulkInsert(list);
+            var list2 = new List<BaseDataDataModel>();
+            //list2.Add(new BaseDataDataModel { GroupCode = "Y", Code = "1", Name = "edward4", CreatedBy = "edward" });
+            //list2.Add(new BaseDataDataModel { GroupCode = "Y", Code = "1", Name = "edward5", CreatedBy = "edward" });
+            var listGroup = new List<BaseDataGroupDataModel>
+            {
+                new BaseDataGroupDataModel {Code = "A",CreatedOn=DateTime.Now, BaseDataList = list},
+                new BaseDataGroupDataModel {Code = "B", BaseDataList = list2}
+            };
+            //for(var i=0;i<1100;i++)
+            //{
+            //    list.Add(new BaseDataDataModel { Path = "/", GroupCode = "X", Code = i.ToString(), Name = "edward4", CreatedBy = "edward" });
+            //}
+            db.BulkInsert(listGroup);
 
             //var sql = new Sql<BaseDataDataModel>("T1")
             //    .Select(t => t.Name)

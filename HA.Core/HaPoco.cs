@@ -742,8 +742,26 @@ namespace HA.Core
                 var pd = PocoData.ForType(typeof(T));
                 var tableName = EscapeTableName(pd.TableInfo.TableName);
                 var columns = pd.Columns.Values.Where(c => !c.ResultColumn && !c.AutoIncrement).ToList();
+
                 var childColumns = pd.Columns.Values.Where(c => c.ChildColumn).ToList();
-                var colsStr = string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
+                if(childColumns.Count>0)
+                {
+                    sql.AppendLine("DECLARE @Id NUMERIC");
+                }
+                var childItemColumn = new Dictionary<string, List<PocoColumn>>();
+                var childItemColsStr = new Dictionary<string, string>();
+                var childItemTableName = new Dictionary<string, string>();
+                childColumns.ForEach(t =>
+                {
+                    var type = t.PropertyInfo.PropertyType;
+                    var pdChildItem = type.IsGenericType ? PocoData.ForType(type.GenericTypeArguments[0]) : PocoData.ForType(type);
+                    childItemTableName.Add(t.ColumnName, EscapeTableName(pdChildItem.TableInfo.TableName));
+                    var childItemColumns = pdChildItem.Columns.Values.Where(c => !c.ResultColumn && !c.AutoIncrement && c.ColumnName != t.ForeignKey).ToList();
+                    childItemColumn.Add(t.ColumnName, childItemColumns);
+                    childItemColsStr.Add(t.ColumnName, EscapeSqlIdentifier(t.ForeignKey) + "," + string.Join(",", childItemColumns.Select(c => EscapeSqlIdentifier(c.ColumnName))));
+                });
+
+                var colsStr = string.Join(",", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
                 foreach (var poco in collection)
                 {
                     var values = GetInsertValueStringList(columns, poco);
@@ -764,9 +782,12 @@ namespace HA.Core
                                 continue;
                             }
                             childItems = childItems ?? new[] { value };
-                            BuildChildBulkInsertSql(childItems[0].GetType(), c.ForeignKey, childItems, sqlAppend);
+                            BuildChildBulkInsertSql(childItemTableName[c.ColumnName], childItemColumn[c.ColumnName], childItemColsStr[c.ColumnName], childItems, sqlAppend);
                         }
-                        insertSql += sqlAppend.ToString();
+                        if (sqlAppend.Length > 0)
+                        {
+                            insertSql = insertSql + "SET @Id=SCOPE_IDENTITY();" + sqlAppend;
+                        }
                     }
                     if (sqlRebuild != null)
                     {
@@ -791,13 +812,10 @@ END CATCH
             }
         }
 
-        private static void BuildChildBulkInsertSql(Type type, string foreignkey, IEnumerable collection, StringBuilder sql)
+        private static void BuildChildBulkInsertSql(string tableName, IEnumerable<PocoColumn> columns, string colsStr, IEnumerable collection, StringBuilder sql)
         {
-            var pd = PocoData.ForType(type);
-            var columns = pd.Columns.Values.Where(c => !c.ResultColumn && !c.AutoIncrement && c.ColumnName != foreignkey).ToList();
-            var colsStr = EscapeSqlIdentifier(foreignkey) + "," + string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
-            var values = (from object poco in collection select "(SCOPE_IDENTITY()," + string.Join(",", GetInsertValueStringList(columns, poco)) + ")");
-            sql.AppendFormat("INSERT {0} ({1}) VALUES {2}", EscapeTableName(pd.TableInfo.TableName), colsStr, string.Join(",", values));
+            var values = (from object poco in collection select "(@Id," + string.Join(",", GetInsertValueStringList(columns, poco)) + ")");
+            sql.AppendFormat("INSERT {0} ({1}) VALUES {2};", tableName, colsStr, string.Join(",", values));
         }
 
         private static IEnumerable<string> GetInsertValueStringList(IEnumerable<PocoColumn> columns, object poco)
@@ -820,8 +838,9 @@ END CATCH
             if (type.IsEnum)
             {
                 value = (int)value;
+                return value.ToString();
             }
-            else if (type == typeof(DateTime))
+            if (type == typeof(DateTime))
             {
                 value = Convert.ToDateTime(value).Year == 1 ? "1900-01-01" : Convert.ToDateTime(value).ToString("yyyy-MM-dd HH:mm:ss.fff");
             }
@@ -855,37 +874,30 @@ END CATCH
 
         private int BulkInsertProcess<T>(IEnumerable<T> collection, string whereSql)
         {
-            try
+            OpenSharedConnection();
+            using (var cmd = CreateCommand(_sharedConnection, ""))
             {
-                OpenSharedConnection();
-                using (var cmd = CreateCommand(_sharedConnection, ""))
+                var pd = PocoData.ForType(typeof(T));
+                var columns = pd.Columns.Values.Where(c => !c.ResultColumn && !c.AutoIncrement).ToList();
+                var colsStr = string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
+                var sql = new StringBuilder();
+                sql.AppendLine("IF(OBJECT_ID('tempdb..#T1') IS NOT NULL) DROP TABLE #T1");
+                sql.AppendFormat("SELECT {0} INTO #T1 FROM {1} WHERE 1=2", colsStr, EscapeTableName(pd.TableInfo.TableName)).AppendLine();
+                foreach (var poco in collection)
                 {
-                    var pd = PocoData.ForType(typeof(T));
-                    var columns = pd.Columns.Values.Where(c => !c.ResultColumn && !c.AutoIncrement).ToList();
-                    var colsStr = string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
-                    var sql = new StringBuilder();
-                    sql.AppendLine("IF(OBJECT_ID('tempdb..#T1') IS NOT NULL) DROP TABLE #T1");
-                    sql.AppendFormat("SELECT {0} INTO #T1 FROM {1} WHERE 1=2", colsStr, EscapeTableName(pd.TableInfo.TableName)).AppendLine();
-                    foreach (var poco in collection)
-                    {
-                        var values = GetInsertValueStringList(columns, poco);
-                        sql.AppendFormat(@"INSERT #T1 VALUES ({0});", string.Join(",", values)).AppendLine();
-                    }
-                    sql.AppendFormat(@"INSERT {0} ({1}) SELECT {1} FROM #T1", EscapeTableName(pd.TableInfo.TableName), colsStr).AppendLine();
-                    if (!string.IsNullOrEmpty(whereSql))
-                    {
-                        sql.AppendLine(whereSql);
-                    }
-                    cmd.CommandText = sql.ToString();
-                    DoPreExecute(cmd);
-                    var returnValue = cmd.ExecuteNonQuery();
-                    OnExecutedCommand(cmd);
-                    return returnValue;
+                    var values = GetInsertValueStringList(columns, poco);
+                    sql.AppendFormat(@"INSERT #T1 VALUES ({0});", string.Join(",", values)).AppendLine();
                 }
-            }
-            finally
-            {
-                CloseSharedConnection();
+                sql.AppendFormat(@"INSERT {0} ({1}) SELECT {1} FROM #T1", EscapeTableName(pd.TableInfo.TableName), colsStr).AppendLine();
+                if (!string.IsNullOrEmpty(whereSql))
+                {
+                    sql.AppendLine(whereSql);
+                }
+                cmd.CommandText = sql.ToString();
+                DoPreExecute(cmd);
+                var returnValue = cmd.ExecuteNonQuery();
+                OnExecutedCommand(cmd);
+                return returnValue;
             }
         }
 
