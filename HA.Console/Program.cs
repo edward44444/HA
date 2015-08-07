@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
+using System.Text.RegularExpressions;
 using HA.Core;
 using HA.Model.Foundation;
 using HA.Service.Foundation;
@@ -38,17 +39,26 @@ namespace HA.Console
             //db.Update(model, t => t.Name, t => t.GroupCode);
             //db.BulkUpdate(new List<BaseDataDataModel> { model }, t => t.Name);
             //Page();
+            var sql = @"SELECT
+BD.BDGroupCode,
+BD.BDPath,
+(SELECT TOP 1 1 FROM dbo.FD_BaseData) C1
+FROM dbo.FD_BaseData BD WITH(NOLOCK)
+OUTER APPLY
+(
+	SELECT TOP 1 BDName FROM dbo.FD_BaseDataGroup BDG WITH(NOLOCK) WHERE BDG.BDGCode=BD.BDGroupCode
+	ORDER BY BDG.CreatedOn DESC
+) AS APT
+WHERE BD.RowStatus=0
+ORDER BY BD.RowStatus DESC
+";
+
+            //sqlSelectRemoved = sql.Substring(g.Index);
 
             var db = new Database("HA");
-            var lst = db.Page<BaseDataDataModel>(1, 100, @"SELECT
-DISTINCT BD.BDGroupCode
-FROM dbo.FD_BaseData BD WITH(NOLOCK)
---OUTER APPLY
---(
---	SELECT TOP 1 BDName FROM dbo.FD_BaseDataGroup BDG WITH(NOLOCK) WHERE BDG.BDGCode=BD.BDGroupCode
---	ORDER BY BDG.CreatedOn DESC
---) AS APT
-WHERE BD.RowStatus=0");
+            var lst = db.Page<BaseDataDataModel>(1, 100, sql);
+
+
             //var list = new List<BaseDataDataModel>
             //{
             //    new BaseDataDataModel {Path="/", GroupCode = "X", Code = "1", Name = "edward4", CreatedBy = "edward",Id=1000},
