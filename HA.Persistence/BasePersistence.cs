@@ -60,14 +60,14 @@ namespace HA.Persistence
             return Database.BulkUpdate(collection, expressions);
         }
 
-        public int BulkUpdate<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, params Expression<Func<T, object>>[] expressions)
+        public int BulkUpdate<T>(IList<T> collection, Expression<Func<T, object>>[] primaryKeyExpressions, params Expression<Func<T, object>>[] expressions)
         {
-            return Database.BulkUpdate(primaryKeyExpressions, collection, expressions);
+            return Database.BulkUpdate(collection, primaryKeyExpressions, expressions);
         }
 
-        public int BulkUpdate<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, Func<string, T, string> sqlRebuild, params Expression<Func<T, object>>[] expressions)
+        public int BulkUpdate<T>(IList<T> collection, Expression<Func<T, object>>[] primaryKeyExpressions, Func<string, T, string> sqlRebuild, params Expression<Func<T, object>>[] expressions)
         {
-            return Database.BulkUpdate(primaryKeyExpressions, collection, sqlRebuild, expressions);
+            return Database.BulkUpdate(collection, primaryKeyExpressions, sqlRebuild, expressions);
         }
     }
 }

@@ -117,6 +117,8 @@ namespace HA.Core
         {
             _connectionString = ConfigurationManager.ConnectionStrings[connectionStringName].ConnectionString;
             _factory = DbProviderFactories.GetFactory("System.Data.SqlClient");
+
+            ForceDateTimesToUtc = true;
         }
 
         public bool ForceDateTimesToUtc { get; set; }
@@ -881,6 +883,7 @@ END CATCH
                 var columns = pd.Columns.Values.Where(c => !c.ResultColumn && !c.AutoIncrement).ToList();
                 var colsStr = string.Join(", ", columns.Select(c => EscapeSqlIdentifier(c.ColumnName)));
                 var sql = new StringBuilder();
+                sql.AppendLine("BEGIN TRY");
                 sql.AppendLine("IF(OBJECT_ID('tempdb..#T1') IS NOT NULL) DROP TABLE #T1");
                 sql.AppendFormat("SELECT {0} INTO #T1 FROM {1} WHERE 1=2", colsStr, EscapeTableName(pd.TableInfo.TableName)).AppendLine();
                 foreach (var poco in collection)
@@ -893,6 +896,15 @@ END CATCH
                 {
                     sql.AppendLine(whereSql);
                 }
+                sql.AppendLine(@"
+END TRY
+BEGIN CATCH
+    DECLARE @ErrorMessage NVARCHAR(4000)=ERROR_MESSAGE();
+    DECLARE @ErrorSeverity INT=ERROR_SEVERITY();
+    DECLARE @ErrorState INT=ERROR_STATE();
+    RAISERROR (@ErrorMessage, @ErrorSeverity,@ErrorState);
+END CATCH
+");
                 cmd.CommandText = sql.ToString();
                 DoPreExecute(cmd);
                 var returnValue = cmd.ExecuteNonQuery();
@@ -985,31 +997,28 @@ END CATCH
             return Update(poco, (from c in expressions select GetColumnName(c)).ToArray());
         }
 
-        private int BulkUpdateProcess<T>(string[] primaryKeyNames, IEnumerable<T> collection, string[] columnNames, Func<string, T, string> sqlRebuild)
+        private int BulkUpdateProcess<T>(IEnumerable<T> collection,string[] primaryKeyNames, string[] columnNames, Func<string, T, string> sqlRebuild)
         {
-            try
+            using (var cmd = CreateCommand(_sharedConnection, ""))
             {
-                OpenSharedConnection();
-                using (var cmd = CreateCommand(_sharedConnection, ""))
+                var pd = PocoData.ForType(typeof(T));
+                var columns = pd.Columns.Values.Where(c => columnNames.Contains(c.ColumnName)).ToList();
+                var primaryKeyColumns = pd.Columns.Values.Where(c => primaryKeyNames.Contains(c.ColumnName)).ToList();
+                var sql = new StringBuilder();
+                sql.AppendLine("BEGIN TRY");
+                foreach (var poco in collection)
                 {
-                    var pd = PocoData.ForType(typeof(T));
-                    var columns = pd.Columns.Values.Where(c => columnNames.Contains(c.ColumnName)).ToList();
-                    var primaryKeyColumns = pd.Columns.Values.Where(c => primaryKeyNames.Contains(c.ColumnName)).ToList();
-                    var sql = new StringBuilder();
-                    sql.AppendLine("BEGIN TRY");
-                    foreach (var poco in collection)
+                    var obj = poco;
+                    var setSqls = columns.Select(t => string.Format("{0}={1}", EscapeSqlIdentifier(t.ColumnName), GetInsertValueString(t, obj))).ToList();
+                    var whereSqls = primaryKeyColumns.Select(t => string.Format("{0}={1}", EscapeSqlIdentifier(t.ColumnName), GetInsertValueString(t, obj))).ToList();
+                    var updateSql = string.Format(@"UPDATE {0} SET {1} WHERE {2};", EscapeSqlIdentifier(pd.TableInfo.TableName), string.Join(",", setSqls), string.Join(" AND ", whereSqls));
+                    if (sqlRebuild != null)
                     {
-                        var obj = poco;
-                        var setSqls = columns.Select(t => string.Format("{0}={1}", EscapeSqlIdentifier(t.ColumnName), GetInsertValueString(t, obj))).ToList();
-                        var whereSqls = primaryKeyColumns.Select(t => string.Format("{0}={1}", EscapeSqlIdentifier(t.ColumnName), GetInsertValueString(t, obj))).ToList();
-                        var updateSql = string.Format(@"UPDATE {0} SET {1} WHERE {2};", EscapeSqlIdentifier(pd.TableInfo.TableName), string.Join(",", setSqls), string.Join(" AND ", whereSqls));
-                        if (sqlRebuild != null)
-                        {
-                            updateSql = sqlRebuild(updateSql, obj);
-                        }
-                        sql.AppendLine(updateSql);
+                        updateSql = sqlRebuild(updateSql, obj);
                     }
-                    sql.AppendFormat(@"
+                    sql.AppendLine(updateSql);
+                }
+                sql.AppendFormat(@"
 END TRY
 BEGIN CATCH
     DECLARE @ErrorMessage NVARCHAR(4000)=ERROR_MESSAGE();
@@ -1018,20 +1027,15 @@ BEGIN CATCH
     RAISERROR (@ErrorMessage, @ErrorSeverity,@ErrorState);
 END CATCH
 ");
-                    cmd.CommandText = sql.ToString();
-                    DoPreExecute(cmd);
-                    var returnValue = cmd.ExecuteNonQuery();
-                    OnExecutedCommand(cmd);
-                    return returnValue;
-                }
-            }
-            finally
-            {
-                CloseSharedConnection();
+                cmd.CommandText = sql.ToString();
+                DoPreExecute(cmd);
+                var returnValue = cmd.ExecuteNonQuery();
+                OnExecutedCommand(cmd);
+                return returnValue;
             }
         }
 
-        public int BulkUpdate<T>(string[] primaryKeyNames, IList<T> collection, string[] columnNames, Func<string, T, string> sqlRebuild)
+        public int BulkUpdate<T>(IList<T> collection, string[] primaryKeyNames, string[] columnNames, Func<string, T, string> sqlRebuild)
         {
             try
             {
@@ -1042,7 +1046,7 @@ END CATCH
                 {
                     while (rowIndex < rowCount)
                     {
-                        returnValue += BulkUpdateProcess(primaryKeyNames, collection.Skip(rowIndex).Take(1000).ToList(), columnNames, sqlRebuild);
+                        returnValue += BulkUpdateProcess(collection.Skip(rowIndex).Take(1000).ToList(), primaryKeyNames, columnNames, sqlRebuild);
                         rowIndex += 1000;
                     }
                     scope.Complete();
@@ -1059,17 +1063,17 @@ END CATCH
         public int BulkUpdate<T>(IList<T> collection, params Expression<Func<T, object>>[] expressions)
         {
             var pd = PocoData.ForType(typeof(T));
-            return BulkUpdate(new[] { pd.TableInfo.PrimaryKey }, collection, (from c in expressions select GetColumnName(c)).ToArray(), null);
+            return BulkUpdate(collection, new[] { pd.TableInfo.PrimaryKey }, (from c in expressions select GetColumnName(c)).ToArray(), null);
         }
 
-        public int BulkUpdate<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, params Expression<Func<T, object>>[] expressions)
+        public int BulkUpdate<T>(IList<T> collection,Expression<Func<T, object>>[] primaryKeyExpressions, params Expression<Func<T, object>>[] expressions)
         {
-            return BulkUpdate(primaryKeyExpressions, collection, null, expressions);
+            return BulkUpdate(collection, primaryKeyExpressions, null, expressions);
         }
 
-        public int BulkUpdate<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, Func<string, T, string> sqlRebuild, params Expression<Func<T, object>>[] expressions)
+        public int BulkUpdate<T>(IList<T> collection, Expression<Func<T, object>>[] primaryKeyExpressions,Func<string, T, string> sqlRebuild, params Expression<Func<T, object>>[] expressions)
         {
-            return BulkUpdate((from c in primaryKeyExpressions select GetColumnName(c)).ToArray(), collection, (from c in expressions select GetColumnName(c)).ToArray(), sqlRebuild);
+            return BulkUpdate(collection, (from c in primaryKeyExpressions select GetColumnName(c)).ToArray(), (from c in expressions select GetColumnName(c)).ToArray(), sqlRebuild);
         }
 
         public int CommandTimeout { get; set; }

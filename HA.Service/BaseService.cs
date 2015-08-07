@@ -60,14 +60,14 @@ namespace HA.Service
             return Persistence.BulkUpdate(collection, expressions);
         }
 
-        public int Update<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, params Expression<Func<T, object>>[] expressions)
+        public int Update<T>(IList<T> collection,Expression<Func<T, object>>[] primaryKeyExpressions, params Expression<Func<T, object>>[] expressions)
         {
-            return Persistence.BulkUpdate(primaryKeyExpressions, collection, expressions);
+            return Persistence.BulkUpdate(collection, primaryKeyExpressions, expressions);
         }
 
-        public int Update<T>(Expression<Func<T, object>>[] primaryKeyExpressions, IList<T> collection, Func<string, T, string> sqlRebuild, params Expression<Func<T, object>>[] expressions)
+        public int Update<T>(IList<T> collection,Expression<Func<T, object>>[] primaryKeyExpressions, Func<string, T, string> sqlRebuild, params Expression<Func<T, object>>[] expressions)
         {
-            return Persistence.BulkUpdate(primaryKeyExpressions, collection, sqlRebuild, expressions);
+            return Persistence.BulkUpdate(collection, primaryKeyExpressions, sqlRebuild, expressions);
         }
     }
 }
