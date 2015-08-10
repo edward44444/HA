@@ -39,25 +39,12 @@ namespace HA.Console
             //db.Update(model, t => t.Name, t => t.GroupCode);
             //db.BulkUpdate(new List<BaseDataDataModel> { model }, t => t.Name);
             //Page();
-            var sql = @"
-SELECT
-BD.BDGroupCode,
-BD.BDPath,
-(SELECT TOP 1 1 FROM dbo.FD_BaseData ORDER BY 1) C1
-FROM dbo.FD_BaseData BD WITH(NOLOCK)
-OUTER APPLY
-(
-	SELECT TOP 1 BDName FROM dbo.FD_BaseDataGroup BDG WITH(NOLOCK) WHERE BDG.BDGCode=BD.BDGroupCode
-	ORDER BY BDG.CreatedOn DESC
-) AS APT
-WHERE
-BD.RowStatus=0
-AND (BD.RowStatus=0)
-ORDER BY BD.RowStatus DESC
-";
-            //sqlSelectRemoved = sql.Substring(g.Index);
 
             var db = new Database("HA");
+            var sql = new Sql<BaseDataDataModel>();
+            sql.Select(t=>t.GroupCode).From();
+            sql.Where(t => t.RowStatus != 0&& !(t.Name == "eeee" || t.GroupCode == "tt"));
+
             var lst = db.Page<BaseDataDataModel>(1, 100, sql);
 
 

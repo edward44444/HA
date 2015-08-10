@@ -98,15 +98,33 @@ namespace HA.Core
                 default:
                     throw new NotSupportedException(node.NodeType.ToString());
             }
+            if (node.NodeType == ExpressionType.AndAlso || node.NodeType == ExpressionType.OrElse)
+            {
+                _sb.Append("(");
+            }
             VisitLeft(node.Left);
             _sb.Append(" ").Append(operation).Append(" ");
             VisitRight(node.Right);
+            if (node.NodeType == ExpressionType.AndAlso || node.NodeType == ExpressionType.OrElse)
+            {
+                _sb.Append(")");
+            }
             return node;
         }
 
         protected virtual void VisitLeft(Expression node)
         {
             Visit(node);
+        }
+
+        protected override Expression VisitUnary(UnaryExpression node)
+        {
+            if (node.NodeType == ExpressionType.Not)
+            {
+                _sb.Append("NOT ");
+            }
+            Visit(node.Operand);
+            return node;
         }
 
         protected virtual void VisitRight(Expression node)

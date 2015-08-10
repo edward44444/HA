@@ -505,9 +505,10 @@ namespace HA.Core
             return Fetch<T>(sql.SQL, sql.Arguments);
         }
 
-        static readonly Regex rxColumns = new Regex(@"\A\s*SELECT\s+((?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|.)*?)(?<!,\s+)(\bFROM\b\s+.*?)\s+\n", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
+        static readonly Regex rxColumns = new Regex(@"\A\s*SELECT\s+((?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|.)*?)(?<!,\s+)\bFROM\b", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
         static readonly Regex rxOrderBy = new Regex(@"\bORDER\s+BY\s+(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\.])+(?:\s+(?:ASC|DESC))?(?:\s*,\s*(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\.])+(?:\s+(?:ASC|DESC))?)*\s*\z", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
         static readonly Regex rxWhere = new Regex(@"\bWHERE\b\s+(.*?)\s*\z", RegexOptions.RightToLeft | RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
+        static readonly Regex rxTable = new Regex(@"\A\s*SELECT\s+((?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|.)*?)(?<!,\s+)(\bFROM\b\s+.*?)\s+\n", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
 
         public static bool SplitSqlForPaging(string sql, out string sqlCount, out string sqlSelectRemoved, out string sqlOrderBy, bool isEase)
         {
@@ -526,10 +527,11 @@ namespace HA.Core
 
             if (isEase)
             {
+                m = rxTable.Match(sql);
                 var gFrom = m.Groups[2];
                 var mWhere = rxWhere.Match(sql);
                 var gWhere = mWhere.Groups[0];
-                sqlCount = sql.Substring(0, g.Index) + "COUNT(*) " + sql.Substring(gFrom.Index, gFrom.Length) + sql.Substring(gWhere.Index, gWhere.Length);
+                sqlCount = sql.Substring(0, g.Index) + "COUNT(*) " + sql.Substring(gFrom.Index, gFrom.Length) + " " + sql.Substring(gWhere.Index, gWhere.Length);
             }
             else
             {
@@ -1735,23 +1737,16 @@ END CATCH
 
         public class SqlJoinClause<TLeft,TRight> : SqlJoinClause
         {
-            private readonly string _alias;
+
 
             public SqlJoinClause(Sql sql)
                 : base(sql)
             {
             }
 
-            public SqlJoinClause(Sql sql, string alias)
-                : base(sql)
-            {
-                _alias = alias;
-            }
-
             public Sql<TLeft> On(Expression<Func<TLeft, TRight, bool>> predicate)
             {
-                var alias = string.IsNullOrWhiteSpace(_alias) ? Database.EscapeTableName(Database.PocoData.ForType(typeof(TRight)).TableInfo.TableName) : _alias;
-                var expressionVisitor = new OnClauseBuilder(alias);
+                var expressionVisitor = new OnClauseBuilder();
                 expressionVisitor.Visit(predicate);
                 return (Sql<TLeft>)_sql.Append("ON " + expressionVisitor.Sql, expressionVisitor.Arguments);
             }
@@ -1802,10 +1797,10 @@ END CATCH
             return (Sql<T>)OrderByDescending(keySelectors.Select(t => alias + "." + Database.EscapeSqlIdentifier(Database.GetColumnName(t))).ToArray());
         }
 
-        public SqlJoinClause<T, TRight> InnerJoin<TRight>(string alias = null)
+        public SqlJoinClause<T, TRight> InnerJoin<TRight>()
         {
             var pd = Database.PocoData.ForType(typeof(TRight));
-            return new SqlJoinClause<T, TRight>(Append(new Sql("INNER JOIN " + pd.TableInfo.TableName + " " + (alias ?? string.Empty) + " WITH(NOLOCK)")),alias);
+            return new SqlJoinClause<T, TRight>(Append(new Sql("INNER JOIN " + pd.TableInfo.TableName + " WITH(NOLOCK)")));
         }
 
         public SqlJoinClause<TLeft, TRight> LeftJoin<TLeft, TRight>(string alias = null)
