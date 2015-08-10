@@ -19,7 +19,7 @@ namespace HA.Core
     public class WhereClauseBuilder : ExpressionVisitor
     {
         private readonly StringBuilder _sb;
-        private readonly string _alias;
+        protected string _alias;
         private readonly List<object> _args;
         private string _methodName;
 

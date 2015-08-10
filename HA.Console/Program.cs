@@ -41,9 +41,12 @@ namespace HA.Console
             //Page();
 
             var db = new Database("HA");
-            var sql = new Sql<BaseDataDataModel>();
+            var sql = new Sql<BaseDataDataModel>("T1");
             sql.Select(t=>t.GroupCode).From();
+            sql.InnerJoin<BaseDataGroupDataModel>("T2").On((t1, t2) => t1.RowStatus == t2.RowStatus || t1.Name == t2.Name);
             sql.Where(t => t.RowStatus != 0&& !(t.Name == "eeee" || t.GroupCode == "tt"));
+            sql.Where(t => t.Id == 1000);
+            sql.OrderByDescending(t => t.Id);
 
             var lst = db.Page<BaseDataDataModel>(1, 100, sql);
 

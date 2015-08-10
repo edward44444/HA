@@ -506,7 +506,7 @@ namespace HA.Core
         }
 
         static readonly Regex rxColumns = new Regex(@"\A\s*SELECT\s+((?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|.)*?)(?<!,\s+)\bFROM\b", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
-        static readonly Regex rxOrderBy = new Regex(@"\bORDER\s+BY\s+(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\.])+(?:\s+(?:ASC|DESC))?(?:\s*,\s*(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\.])+(?:\s+(?:ASC|DESC))?)*\s*\z", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
+        static readonly Regex rxOrderBy = new Regex(@"\bORDER\s+BY\s+(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\.])+(?:\s+(?:ASC|DESC))?(?:\s*,\s*(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\.])+(?:\s+(?:ASC|DESC))?)*", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
         static readonly Regex rxWhere = new Regex(@"\bWHERE\b\s+(.*?)\s*\z", RegexOptions.RightToLeft | RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
         static readonly Regex rxTable = new Regex(@"\A\s*SELECT\s+((?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|.)*?)(?<!,\s+)(\bFROM\b\s+.*?)\s+\n", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
 
@@ -1722,7 +1722,7 @@ END CATCH
 
         public class SqlJoinClause
         {
-            protected readonly Sql _sql;
+            private readonly Sql _sql;
 
             public SqlJoinClause(Sql sql)
             {
@@ -1733,22 +1733,35 @@ END CATCH
             {
                 return _sql.Append("ON " + onClause, args);
             }
+
+            public Sql Sql
+            {
+                get { return _sql; }
+            }
         }
 
         public class SqlJoinClause<TLeft,TRight> : SqlJoinClause
         {
-
+            private readonly string _alias;
 
             public SqlJoinClause(Sql sql)
                 : base(sql)
             {
             }
 
+            public SqlJoinClause(Sql sql, string alias)
+                : base(sql)
+            {
+                _alias = alias;
+            }
+
             public Sql<TLeft> On(Expression<Func<TLeft, TRight, bool>> predicate)
             {
-                var expressionVisitor = new OnClauseBuilder();
+                var aliasLeft = string.IsNullOrWhiteSpace(((Sql<TLeft>)Sql).Alias) ? Database.EscapeTableName(Database.PocoData.ForType(typeof(TLeft)).TableInfo.TableName) : ((Sql<TLeft>)Sql).Alias;
+                var aliasRight = string.IsNullOrWhiteSpace(_alias) ? Database.EscapeTableName(Database.PocoData.ForType(typeof(TRight)).TableInfo.TableName) : _alias;
+                var expressionVisitor = new OnClauseBuilder(aliasLeft, aliasRight);
                 expressionVisitor.Visit(predicate);
-                return (Sql<TLeft>)_sql.Append("ON " + expressionVisitor.Sql, expressionVisitor.Arguments);
+                return (Sql<TLeft>)Sql.Append("ON " + expressionVisitor.Sql, expressionVisitor.Arguments);
             }
         }
     }
@@ -1764,6 +1777,11 @@ END CATCH
         public Sql(string alias)
         {
             _alias = alias;
+        }
+
+        public string Alias
+        {
+            get { return _alias; }
         }
 
         public Sql<T> Where(Expression<Func<T, bool>> predicate)
@@ -1797,16 +1815,16 @@ END CATCH
             return (Sql<T>)OrderByDescending(keySelectors.Select(t => alias + "." + Database.EscapeSqlIdentifier(Database.GetColumnName(t))).ToArray());
         }
 
-        public SqlJoinClause<T, TRight> InnerJoin<TRight>()
+        public SqlJoinClause<T, TRight> InnerJoin<TRight>(string alias = null)
         {
             var pd = Database.PocoData.ForType(typeof(TRight));
-            return new SqlJoinClause<T, TRight>(Append(new Sql("INNER JOIN " + pd.TableInfo.TableName + " WITH(NOLOCK)")));
+            return new SqlJoinClause<T, TRight>(Append(new Sql("INNER JOIN " + pd.TableInfo.TableName + " " + (alias ?? string.Empty) + " WITH(NOLOCK)")), alias);
         }
 
-        public SqlJoinClause<TLeft, TRight> LeftJoin<TLeft, TRight>(string alias = null)
+        public SqlJoinClause<T, TRight> LeftJoin<TRight>(string alias = null)
         {
             var pd = Database.PocoData.ForType(typeof(TRight));
-            return new SqlJoinClause<TLeft, TRight>(Append(new Sql("LEFT JOIN " + pd.TableInfo.TableName + " " + (alias ?? string.Empty) + " WITH(NOLOCK)")), alias);
+            return new SqlJoinClause<T, TRight>(Append(new Sql("LEFT JOIN " + pd.TableInfo.TableName + " " + (alias ?? string.Empty) + " WITH(NOLOCK)")), alias);
         }
     }
 
