@@ -505,11 +505,11 @@ namespace HA.Core
             return Fetch<T>(sql.SQL, sql.Arguments);
         }
 
-        static readonly Regex rxColumns = new Regex(@"\A\s*SELECT\s+((?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|.)*?)(?<!,\s+)\bFROM\b", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
+        static readonly Regex rxColumns = new Regex(@"\A\s*SELECT\s+((?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|.)*?)(?<!,\s+)(\bFROM\b\s+.*?)\s+\n", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
         static readonly Regex rxOrderBy = new Regex(@"\bORDER\s+BY\s+(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\.])+(?:\s+(?:ASC|DESC))?(?:\s*,\s*(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\.])+(?:\s+(?:ASC|DESC))?)*\s*\z", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
-        static readonly Regex rxDistinct = new Regex(@"\ADISTINCT\s", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
+        static readonly Regex rxWhere = new Regex(@"\bWHERE\b\s+(.*?)\s*\z", RegexOptions.RightToLeft | RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
 
-        public static bool SplitSqlForPaging(string sql, out string sqlCount, out string sqlSelectRemoved, out string sqlOrderBy)
+        public static bool SplitSqlForPaging(string sql, out string sqlCount, out string sqlSelectRemoved, out string sqlOrderBy, bool isEase)
         {
             sqlSelectRemoved = null;
             sqlCount = null;
@@ -524,10 +524,17 @@ namespace HA.Core
             var g = m.Groups[1];
             sqlSelectRemoved = sql.Substring(g.Index);
 
-            if (rxDistinct.IsMatch(sqlSelectRemoved))
-                sqlCount = sql.Substring(0, g.Index) + "COUNT(" + m.Groups[1].ToString().Trim() + ") " + sql.Substring(g.Index + g.Length);
+            if (isEase)
+            {
+                var gFrom = m.Groups[2];
+                var mWhere = rxWhere.Match(sql);
+                var gWhere = mWhere.Groups[0];
+                sqlCount = sql.Substring(0, g.Index) + "COUNT(*) " + sql.Substring(gFrom.Index, gFrom.Length) + sql.Substring(gWhere.Index, gWhere.Length);
+            }
             else
+            {
                 sqlCount = sql.Substring(0, g.Index) + "COUNT(*) " + sql.Substring(g.Index + g.Length);
+            }
 
 
             // Look for an "ORDER BY <whatever>" clause
@@ -542,30 +549,27 @@ namespace HA.Core
             return true;
         }
 
-        public void BuildPageQueries<T>(long skip, long take, string sql, ref object[] args, out string sqlCount, out string sqlPage)
+        public void BuildPageQueries<T>(long skip, long take, string sql, ref object[] args, out string sqlCount, out string sqlPage, bool isEase = false)
         {
             // Add auto select clause
             sql = AddSelectClause<T>(sql);
 
             // Split the SQL into the bits we need
             string sqlSelectRemoved, sqlOrderBy;
-            if (!SplitSqlForPaging(sql, out sqlCount, out sqlSelectRemoved, out sqlOrderBy))
+            if (!SplitSqlForPaging(sql, out sqlCount, out sqlSelectRemoved, out sqlOrderBy, isEase))
                 throw new Exception("Unable to parse SQL statement for paged query");
 
             sqlSelectRemoved = rxOrderBy.Replace(sqlSelectRemoved, "");
-            if (rxDistinct.IsMatch(sqlSelectRemoved))
-            {
-                sqlSelectRemoved = "peta_inner.* FROM (SELECT " + sqlSelectRemoved + ") peta_inner";
-            }
+
             sqlPage = string.Format("SELECT * FROM (SELECT ROW_NUMBER() OVER ({0}) peta_rn, {1}) peta_paged WHERE peta_rn>@{2} AND peta_rn<=@{3}",
                                     sqlOrderBy ?? "ORDER BY (SELECT NULL)", sqlSelectRemoved, args.Length, args.Length + 1);
             args = args.Concat(new object[] { skip, skip + take }).ToArray();
         }
 
-        public Page<T> Page<T>(long page, long itemsPerPage, string sql, params object[] args)
+        public Page<T> Page<T>(long page, long itemsPerPage, string sql, bool isEase , params object[] args)
         {
             string sqlCount, sqlPage;
-            BuildPageQueries<T>((page - 1) * itemsPerPage, itemsPerPage, sql, ref args, out sqlCount, out sqlPage);
+            BuildPageQueries<T>((page - 1) * itemsPerPage, itemsPerPage, sql, ref args, out sqlCount, out sqlPage, isEase);
 
             // Save the one-time command time out and use it for both queries
             var saveTimeout = OneTimeCommandTimeout;
@@ -590,9 +594,24 @@ namespace HA.Core
             return result;
         }
 
+        public Page<T> Page<T>(long page, long itemsPerPage, string sql, params object[] args)
+        {
+            return Page<T>(page, itemsPerPage, sql, false, args);
+        }
+
         public Page<T> Page<T>(long page, long itemsPerPage, Sql sql)
         {
             return Page<T>(page, itemsPerPage, sql.SQL, sql.Arguments);
+        }
+
+        public Page<T> EasePage<T>(long page, long itemsPerPage, string sql, params object[] args)
+        {
+            return Page<T>(page, itemsPerPage, sql, true, args);
+        }
+
+        public Page<T> EasePage<T>(long page, long itemsPerPage, Sql sql)
+        {
+            return Page<T>(page, itemsPerPage, sql.SQL, true, sql.Arguments);
         }
 
         public List<T> SkipTake<T>(long skip, long take, string sql, params object[] args)
