@@ -8,7 +8,7 @@
 <#@ import namespace="System.Data.SqlClient" #>
 <#@ import namespace="System.Data" #>
 <# 
-     string connectionString = "server=.;database=HA;user id=sa;password=abc123.;"; 
+     string connectionString = "server=.;database=HA;user id=sa;password=123;"; 
     SqlConnection conn = new SqlConnection(connectionString);
     conn.Open(); 
     System.Data.DataTable schema = conn.GetSchema("TABLES"); 
@@ -20,7 +20,7 @@
     {
     string tableName = row["TABLE_NAME"].ToString();	
     //表名
-    if(tableName!="FA_CallBack")continue;	 
+    if(tableName!="ST_HouseData")continue;	 
     string className = tableName.Substring(tableName.IndexOf('_') + 1);
     #>
     using System;

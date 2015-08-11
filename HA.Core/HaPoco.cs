@@ -13,9 +13,135 @@ using System.Reflection.Emit;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using HA.Core.Toolkit;
 
 namespace HA.Core
 {
+    public abstract class ConverterAttribute : Attribute
+    {
+        public abstract Func<object, object> GetConverter(Type srcType, Type dstType);
+    }
+
+    //public class XmlConverterAttribute : ConverterAttribute
+    //{
+    //    static MethodInfo fnGetList = typeof(TC.Finance.Toolkit.XmlHelper).GetMethod("GetEntityList", BindingFlags.Static | BindingFlags.Public);
+    //    public override Func<object, object> GetConverter(Type srcType, Type dstType)
+    //    {
+    //        return (src) => (src == null ? null : fnGetList.MakeGenericMethod(dstType.GetGenericArguments()).Invoke(null, new object[] { src }));
+    //    }
+    //}
+
+    //public class JsonConverterAttribute : ConverterAttribute
+    //{
+    //    public override Func<object, object> GetConverter(Type srcType, Type dstType)
+    //    {
+    //        return (src) => (src == null ? null : src.ToString().ToObject(dstType));
+    //    }
+    //}
+
+    public class BaseDataConverterAttribute : ConverterAttribute
+    {
+        protected static Database _db = new Database("HA");
+
+        public class BaseData
+        {
+            /// <summary>
+            /// 编码
+            /// </summary>
+            [Column("BDCode")]
+            public string Code { get; set; }
+
+            /// <summary>
+            /// 名称
+            /// </summary>
+            [Column("BDName")]
+            public string Name { get; set; }
+        }
+
+        protected string _baseDataGroupCode;
+
+        protected string _relativeColumn;
+
+        protected string _cacheKey;
+
+        protected string _defaultValue;
+
+        protected string _field;
+
+        public BaseDataConverterAttribute(string baseDataGroupCode, string relativeColumn)
+        {
+            _baseDataGroupCode = baseDataGroupCode;
+            _relativeColumn = relativeColumn;
+            _cacheKey = EncryptHelper.Md5Encrypt("PetaPoco.BaseDataConvertAttribute." + baseDataGroupCode);
+        }
+
+        public BaseDataConverterAttribute(string baseDataGroupCode, string relativeColumn, string defaultValue)
+            : this(baseDataGroupCode, relativeColumn)
+        {
+            _defaultValue = defaultValue;
+        }
+
+        public BaseDataConverterAttribute(string baseDataGroupCode, string relativeColumn, string defaultValue, string field)
+            : this(baseDataGroupCode, relativeColumn, defaultValue)
+        {
+            _field = field;
+        }
+
+        public virtual bool Compare(BaseData baseData, object src)
+        {
+            if (baseData.Code == src.ToString())
+            {
+                return true;
+            }
+            return false;
+        }
+
+        public override Func<object, object> GetConverter(Type srcType, Type dstType)
+        {
+            return src =>
+            {
+                if (src == null)
+                {
+                    return null;
+                }
+                if (string.IsNullOrWhiteSpace(src.ToString()))
+                {
+                    return string.Empty;
+                }
+                var baseDataList = GetBaseDataList();
+                foreach (var baseData in baseDataList)
+                {
+                    if (Compare(baseData, src))
+                    {
+                        //if (_field == "Remark")
+                        //{
+                        //    return baseData.Remark;
+                        //}
+                        return baseData.Name;
+                    }
+                }
+                return _defaultValue;
+            };
+        }
+
+        public List<BaseData> GetBaseDataList()
+        {
+            var baseDataList = CacheHelper.GetValue<List<BaseData>>(_cacheKey);
+            if (baseDataList == null)
+            {
+                baseDataList = _db.Fetch<BaseData>(@"
+SELECT
+BD.BDCode,
+BD.BDName
+FROM dbo.FD_BaseData BD WITH(NOLOCK)
+WHERE BD.RowStatus=0
+AND BD.BDGroupCode=@0", _baseDataGroupCode);
+                CacheHelper.Insert(_cacheKey, baseDataList, DateTime.UtcNow.AddHours(6));
+            }
+            return baseDataList;
+        }
+    }
+
     // marks property as a column and optionally supplies column name
     [AttributeUsage(AttributeTargets.Property)]
     public class ColumnAttribute : Attribute
@@ -1503,6 +1629,15 @@ END CATCH
             {
                 Func<object, object> converter = null;
 
+                if (pc != null)
+                {
+                    var convertAttr = pc.PropertyInfo.GetCustomAttributes<ConverterAttribute>(true).FirstOrDefault();
+                    if (convertAttr != null)
+                    {
+                        return convertAttr.GetConverter(srcType, dstType);
+                    }
+                }
+
                 // Standard DateTime->Utc mapper
                 if (forceDateTimesToUtc && srcType == typeof(DateTime) && (dstType == typeof(DateTime) || dstType == typeof(DateTime?)))
                 {
@@ -1795,6 +1930,10 @@ END CATCH
         public Sql<T> Select(params Expression<Func<T, object>>[] keySelectors)
         {
             var alias = string.IsNullOrWhiteSpace(_alias) ? Database.EscapeTableName(Database.PocoData.ForType(typeof(T)).TableInfo.TableName) : _alias;
+            if (keySelectors.Length==0)
+            {
+                return (Sql<T>)Select(Database.PocoData.ForType(typeof(T)).QueryColumns.Select(t => alias + "." + Database.EscapeSqlIdentifier(t)).ToArray());
+            }
             return (Sql<T>)Select(keySelectors.Select(t => alias + "." + Database.EscapeSqlIdentifier(Database.GetColumnName(t))).ToArray());
         }
 

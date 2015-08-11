@@ -33,6 +33,7 @@
     <Reference Include="System" />
     <Reference Include="System.Configuration" />
     <Reference Include="System.Core" />
+    <Reference Include="System.Web" />
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Data.DataSetExtensions" />
     <Reference Include="Microsoft.CSharp" />
@@ -41,9 +42,10 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="OnClauseBuilder.cs" />
+    <Compile Include="Toolkit\CacheHelper.cs" />
+    <Compile Include="Toolkit\EncryptHelper.cs" />
     <Compile Include="WhereClauseBuilder.cs" />
     <Compile Include="HaPoco.cs" />
-    <Compile Include="PetaPoco.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

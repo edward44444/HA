@@ -50,8 +50,5 @@ namespace HA.Model.Foundation
         [Column("RowStatus")]
         [DisplayName("行状态")]
         public int RowStatus { get; set; }
-
-        [ChildColumn("BDGroupCode")]
-        public List<BaseDataDataModel> BaseDataList { get; set; }
     }
 }
