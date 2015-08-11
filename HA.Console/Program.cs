@@ -41,14 +41,29 @@ namespace HA.Console
             //Page();
 
             var db = new Database("HA");
-            var sql = new Sql<BaseDataDataModel>("T1");
-            sql.Select(t=>t.GroupCode).From();
-            sql.InnerJoin<BaseDataGroupDataModel>("T2").On((t1, t2) => t1.RowStatus == t2.RowStatus || t1.Name == t2.Name);
-            sql.Where(t => t.RowStatus != 0&& !(t.Name == "eeee" || t.GroupCode == "tt"));
-            sql.Where(t => t.Id == 1000);
-            sql.OrderByDescending(t => t.Id);
+            //var sql = new Sql<BaseDataDataModel>("T1");
+            //sql.Select(t => t.GroupCode).From();
+            //sql.InnerJoin<BaseDataGroupDataModel>("T2").On((t1, t2) => t1.RowStatus == t2.RowStatus || t1.Name == t2.Name || 0 == t2.RowStatus);
+            //sql.Where(t => t.RowStatus != 0 && !(t.Name == "eeee" || t.GroupCode == "tt"));
+            //sql.Where(t => t.Id == 1000);
+            //sql.Where("T2.RowStatus=@0", 100);
+            //sql.OrderByDescending(t => t.Id, t => t.CreatedBy).OrderBy(t => t.GroupCode);
 
-            var lst = db.Page<BaseDataDataModel>(1, 100, sql);
+            var sql = new Sql<BaseDataDataModel>();
+
+            var lst = db.Fetch(sql);
+
+//            var s = @"
+//SELECT COUNT(*) FROM [FD_BaseData]  WITH(NOLOCK)
+//INNER JOIN FD_BaseDataGroup  WITH(NOLOCK)
+//ON ([FD_BaseData].[RowStatus] = [FD_BaseDataGroup].[RowStatus] OR [FD_BaseData].[BDName] = [FD_BaseDataGroup].[BDGName])
+//WHERE (([FD_BaseData].[RowStatus] != @0 AND NOT ([FD_BaseData].[BDName] = @1 OR [FD_BaseData].[BDGroupCode] = @2)))
+//AND ([FD_BaseData].[BDID] = @3)
+//ORDER BY FD_BaseData.[BDID] DESC 
+//";
+//            var reg = new Regex(@"\bORDER\s+BY\s+(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\[\]\.])+(?:\s+(?:ASC|DESC))?(?:\s*,\s*(?:\((?>\((?<depth>)|\)(?<-depth>)|.?)*(?(depth)(?!))\)|[\w\(\)\[\]\.])+(?:\s+(?:ASC|DESC))?)*\s*\z", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
+
+//            var match = reg.Match(s);
 
 
             //var list = new List<BaseDataDataModel>
