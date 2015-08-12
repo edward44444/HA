@@ -60,40 +60,28 @@ namespace HA.Core
 
         protected string _baseDataGroupCode;
 
-        protected string _relativeColumn;
-
         protected string _cacheKey;
 
         protected string _defaultValue;
 
         protected string _field;
 
-        public BaseDataConverterAttribute(string baseDataGroupCode, string relativeColumn)
+        public BaseDataConverterAttribute(string baseDataGroupCode)
         {
             _baseDataGroupCode = baseDataGroupCode;
-            _relativeColumn = relativeColumn;
             _cacheKey = EncryptHelper.Md5Encrypt("PetaPoco.BaseDataConvertAttribute." + baseDataGroupCode);
         }
 
-        public BaseDataConverterAttribute(string baseDataGroupCode, string relativeColumn, string defaultValue)
-            : this(baseDataGroupCode, relativeColumn)
+        public BaseDataConverterAttribute(string baseDataGroupCode, string defaultValue)
+            : this(baseDataGroupCode)
         {
             _defaultValue = defaultValue;
         }
 
-        public BaseDataConverterAttribute(string baseDataGroupCode, string relativeColumn, string defaultValue, string field)
-            : this(baseDataGroupCode, relativeColumn, defaultValue)
+        public BaseDataConverterAttribute(string baseDataGroupCode, string defaultValue, string field)
+            : this(baseDataGroupCode, defaultValue)
         {
             _field = field;
-        }
-
-        public virtual bool Compare(BaseData baseData, object src)
-        {
-            if (baseData.Code == src.ToString())
-            {
-                return true;
-            }
-            return false;
         }
 
         public override Func<object, object> GetConverter(Type srcType, Type dstType)
@@ -109,24 +97,22 @@ namespace HA.Core
                     return string.Empty;
                 }
                 var baseDataList = GetBaseDataList();
-                foreach (var baseData in baseDataList)
+                BaseData baseData;
+                if (baseDataList.TryGetValue(src.ToString(), out baseData))
                 {
-                    if (Compare(baseData, src))
-                    {
-                        //if (_field == "Remark")
-                        //{
-                        //    return baseData.Remark;
-                        //}
-                        return baseData.Name;
-                    }
+                    //if (_field == "Remark")
+                    //{
+                    //    return baseData.Remark;
+                    //}
+                    return baseData.Name;
                 }
                 return _defaultValue;
             };
         }
 
-        public List<BaseData> GetBaseDataList()
+        public Dictionary<string, BaseData> GetBaseDataList()
         {
-            var baseDataList = CacheHelper.GetValue<List<BaseData>>(_cacheKey);
+            var baseDataList = CacheHelper.GetValue<Dictionary<string, BaseData>>(_cacheKey);
             if (baseDataList == null)
             {
                 baseDataList = _db.Fetch<BaseData>(@"
@@ -135,7 +121,7 @@ BD.BDCode,
 BD.BDName
 FROM dbo.FD_BaseData BD WITH(NOLOCK)
 WHERE BD.RowStatus=0
-AND BD.BDGroupCode=@0", _baseDataGroupCode);
+AND BD.BDGroupCode=@0", _baseDataGroupCode).ToDictionary(t => t.Code);
                 CacheHelper.Insert(_cacheKey, baseDataList, DateTime.UtcNow.AddHours(6));
             }
             return baseDataList;

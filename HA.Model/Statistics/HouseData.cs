@@ -24,7 +24,7 @@ namespace HA.Model.Statistics
         /// <summary>
         /// 地区名称
         /// </summary>
-        [BaseDataConverter("BD_Region", "HDRegion")]
+        [BaseDataConverter("BD_Region")]
         [DisplayName("地区名称")]
         [ResultColumn]
         public string RegionName { get; set; }

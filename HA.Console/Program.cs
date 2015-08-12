@@ -19,6 +19,7 @@ namespace HA.Console
             var db = new Database("HA");
 
             var sql = new Sql<HouseData>("T");
+            sql.Select(t => t.RegionName);
             var list = db.Fetch(sql);
 
             //var sql = new Sql<BaseDataDataModel>("T1");
